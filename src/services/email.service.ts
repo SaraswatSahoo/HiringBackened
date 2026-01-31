@@ -18,14 +18,22 @@ export const sendEmail = async (
 ): Promise<boolean> => {
   try {
     await transporter.sendMail({
-      from: env.EMAIL_USER,
+      from: `"Hiring Platform" <${env.EMAIL_USER}>`,
       to,
       subject: subject || "Interview Update",
-      html
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px;">
+          <h2>Hiring Update</h2>
+          <p>${html}</p>
+          <hr>
+          <small>This is an automated message from Hiring Platform</small>
+        </div>
+      `
     });
+    console.log(`✅ Email sent to ${to}`);
     return true;
   } catch (error) {
-    console.error("Email sending failed:", error);
+    console.error(`❌ Email failed to ${to}:`, error);
     return false;
   }
 };
