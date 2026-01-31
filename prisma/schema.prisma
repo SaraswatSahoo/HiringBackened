@@ -1,0 +1,301 @@
+// schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ USER & AUTH ============
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  password      String
+  name          String
+  role          UserRole @default(RECRUITER)
+  isActive      Boolean  @default(true)
+  phone         String?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  createdJDs    JobDescription[] @relation("CreatedBy")
+  candidateActions CandidateHistory[]
+  comments      Comment[]
+  interviews    Interview[]
+  
+  @@index([email])
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  HR
+  RECRUITER
+}
+
+// ============ JOB DESCRIPTIONS (JDs) ============
+model JobDescription {
+  id                String   @id @default(cuid())
+  title             String
+  description       String   @db.Text
+  department        String?
+  location          String?
+  employmentType    EmploymentType @default(FULL_TIME)
+  
+  // Hiring Type
+  hiringType        HiringType @default(NORMAL)
+  
+  // For Normal Hiring
+  experienceMin     Int?
+  experienceMax     Int?
+  salary            String?
+  requiredSkills    String[] // Array of skills
+  
+  // For Bulk Hiring
+  targetColleges    String[] // Array of college names
+  eligibleDegrees   String[] // e.g., ["B.Tech", "MCA"]
+  eligibleYears     Int[]    // e.g., [2024, 2025]
+  
+  isActive          Boolean  @default(true)
+  openings          Int      @default(1)
+  
+  createdById       String
+  createdBy         User     @relation("CreatedBy", fields: [createdById], references: [id])
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  candidates        Candidate[]
+  templates         MessageTemplate[]
+  
+  @@index([hiringType, isActive])
+  @@index([createdById])
+  @@map("job_descriptions")
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERNSHIP
+}
+
+enum HiringType {
+  BULK      // For freshers/college hiring
+  NORMAL    // For experienced hiring
+}
+
+// ============ CANDIDATES ============
+model Candidate {
+  id                String   @id @default(cuid())
+  
+  // Basic Info
+  name              String
+  email             String
+  phone             String
+  
+  // For Bulk Hiring
+  college           String?
+  degree            String?
+  yearOfPassing     Int?
+  
+  // For Normal Hiring
+  experienceYears   Float?
+  currentCompany    String?
+  previousCompany   String?
+  skills            String[] // Array of skills
+  location          String?
+  resumeUrl         String?
+  
+  // Status & Tracking
+  stage             CandidateStage @default(APPLIED)
+  isEligible        Boolean  @default(true)
+  rating            Float?   // 1-5 rating
+  
+  // Link to JD
+  jobDescriptionId  String
+  jobDescription    JobDescription @relation(fields: [jobDescriptionId], references: [id], onDelete: Cascade)
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  history           CandidateHistory[]
+  comments          Comment[]
+  interviews        Interview[]
+  communications    Communication[]
+  
+  @@unique([email, jobDescriptionId]) // One candidate per JD
+  @@index([jobDescriptionId, stage])
+  @@index([college])
+  @@index([yearOfPassing])
+  @@map("candidates")
+}
+
+enum CandidateStage {
+  // Bulk Hiring Stages
+  APPLIED
+  SHORTLISTED
+  INTERVIEWED
+  SELECTED
+  REJECTED
+  
+  // Normal Hiring Stages
+  HR_ROUND
+  TECHNICAL_ROUND
+  CLIENT_ROUND
+  OFFER
+  JOINED
+  DROPPED
+}
+
+// ============ CANDIDATE TRACKING ============
+model CandidateHistory {
+  id            String   @id @default(cuid())
+  
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  fromStage     CandidateStage?
+  toStage       CandidateStage
+  notes         String?  @db.Text
+  
+  changedById   String
+  changedBy     User     @relation(fields: [changedById], references: [id])
+  
+  createdAt     DateTime @default(now())
+  
+  @@index([candidateId])
+  @@map("candidate_history")
+}
+
+// ============ COMMENTS & FEEDBACK ============
+model Comment {
+  id            String   @id @default(cuid())
+  
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  content       String   @db.Text
+  
+  authorId      String
+  author        User     @relation(fields: [authorId], references: [id])
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@index([candidateId])
+  @@map("comments")
+}
+
+// ============ INTERVIEWS ============
+model Interview {
+  id            String   @id @default(cuid())
+  
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  scheduledAt   DateTime
+  duration      Int      @default(60) // in minutes
+  interviewType String   // "HR", "Technical", "Client"
+  meetingLink   String?
+  
+  feedback      String?  @db.Text
+  rating        Float?   // 1-5
+  status        InterviewStatus @default(SCHEDULED)
+  
+  interviewerId String
+  interviewer   User     @relation(fields: [interviewerId], references: [id])
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@index([candidateId])
+  @@index([scheduledAt])
+  @@map("interviews")
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+// ============ BULK COMMUNICATION ============
+model Communication {
+  id            String   @id @default(cuid())
+  
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  channel       CommunicationChannel
+  subject       String?
+  message       String   @db.Text
+  status        CommunicationStatus @default(PENDING)
+  
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  errorMessage  String?
+  
+  createdAt     DateTime @default(now())
+  
+  @@index([candidateId])
+  @@index([status])
+  @@map("communications")
+}
+
+enum CommunicationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum CommunicationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+}
+
+// ============ MESSAGE TEMPLATES ============
+model MessageTemplate {
+  id                String   @id @default(cuid())
+  
+  name              String
+  channel           CommunicationChannel
+  subject           String?  // For emails
+  content           String   @db.Text
+  
+  jobDescriptionId  String?
+  jobDescription    JobDescription? @relation(fields: [jobDescriptionId], references: [id], onDelete: Cascade)
+  
+  isGlobal          Boolean  @default(false) // Available across all JDs
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@index([jobDescriptionId])
+  @@map("message_templates")
+}
+
+// ============ ANALYTICS & DASHBOARD ============
+model DashboardMetrics {
+  id            String   @id @default(cuid())
+  
+  date          DateTime @unique @default(now())
+  
+  totalJDs      Int      @default(0)
+  activeJDs     Int      @default(0)
+  totalCandidates Int    @default(0)
+  totalSelections Int    @default(0)
+  totalDropouts   Int    @default(0)
+  
+  @@index([date])
+  @@map("dashboard_metrics")
+}

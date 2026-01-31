@@ -1,0 +1,67 @@
+# ================================
+# Node & Package Managers
+# ================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ================================
+# Build Outputs
+# ================================
+dist/
+build/
+out/
+.next/
+.vercel/
+
+# ================================
+# Environment Variables
+# ================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ================================
+# Logs
+# ================================
+logs/
+*.log
+
+# ================================
+# OS Generated Files
+# ================================
+.DS_Store
+Thumbs.db
+
+# ================================
+# Editor / IDE Settings
+# ================================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ================================
+# Coverage & Test Reports
+# ================================
+coverage/
+.nyc_output/
+
+# ================================
+# Cache
+# ================================
+.cache/
+.eslintcache
+.parcel-cache/
+
+# ================================
+# Misc
+# ================================
+*.pem
+*.key
+
+/src/generated/prisma
