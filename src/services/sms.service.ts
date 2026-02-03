@@ -1,18 +1,28 @@
-import twilio from "twilio";
-import { env } from "../config/env";
+// src/services/sms.service.ts
+import twilio from 'twilio';
+import config from '../config/env';
+import logger from '../utils/logger';
 
-const client = twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+const client = twilio(config.sms.accountSid, config.sms.authToken);
 
-export const sendSMS = async (to: string, body: string): Promise<boolean> => {
-  try {
-    await client.messages.create({
-      body,
-      from: env.TWILIO_PHONE_NUMBER,
-      to
-    });
-    return true;
-  } catch (error) {
-    console.error("SMS sending failed:", error);
-    return false;
+class SMSService {
+  async send(to: string, message: string): Promise<{ success: boolean }> {
+    try {
+      const formattedNumber = to.startsWith('+') ? to : `+91${to}`;
+      
+      await client.messages.create({
+        body: message,
+        from: config.sms.number,
+        to: formattedNumber,
+      });
+      
+      logger.info(`SMS sent to ${to}`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`SMS failed to ${to}:`, error);
+      throw error;
+    }
   }
-};
+}
+
+export default new SMSService();

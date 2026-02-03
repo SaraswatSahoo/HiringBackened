@@ -1,21 +1,28 @@
-import twilio from "twilio";
-import { env } from "../config/env";
+// src/services/whatsapp.service.ts
+import twilio from 'twilio';
+import config from '../config/env';
+import logger from '../utils/logger';
 
-const client = twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+const client = twilio(config.whatsapp.accountSid, config.whatsapp.authToken);
 
-export const sendWhatsApp = async (
-  to: string,
-  body: string
-): Promise<boolean> => {
-  try {
-    await client.messages.create({
-      body,
-      from: `whatsapp:${env.TWILIO_PHONE_NUMBER}`,
-      to: `whatsapp:${to}`
-    });
-    return true;
-  } catch (error) {
-    console.error("WhatsApp sending failed:", error);
-    return false;
+class WhatsAppService {
+  async send(to: string, message: string): Promise<{ success: boolean }> {
+    try {
+      const formattedNumber = to.startsWith('+') ? to : `+91${to}`;
+      
+      await client.messages.create({
+        body: message,
+        from: config.whatsapp.number,
+        to: `whatsapp:${formattedNumber}`,
+      });
+      
+      logger.info(`WhatsApp sent to ${to}`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`WhatsApp failed to ${to}:`, error);
+      throw error;
+    }
   }
-};
+}
+
+export default new WhatsAppService();

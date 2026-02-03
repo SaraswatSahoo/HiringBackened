@@ -1,23 +1,38 @@
-import http from "http";
-import app from "./app";
-import { env } from "./config/env";
-import { prisma } from "./config/prisma";
+// src/server.ts
+import app from './app';
+import config from './config/env';
+import logger from './utils/logger';
+import prisma from './prisma/client';
 
-const server = http.createServer(app);
+const PORT = config.port;
 
-const start = async () => {
-  server.listen(env.PORT, () => {
-    console.log(`Server running on port ${env.PORT} (${env.NODE_ENV})`);
-  });
-};
+async function startServer() {
+  try {
+    // Test database connection
+    await prisma.$connect();
+    logger.info('Database connected successfully');
+    
+    app.listen(PORT, () => {
+      logger.info(`Server running on port ${PORT} in ${config.env} mode`);
+      logger.info(`API available at http://localhost:${PORT}${config.apiPrefix}`);
+    });
+  } catch (error) {
+    logger.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
 
-const shutdown = async () => {
-  console.log("Graceful shutdown...");
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  logger.info('Shutting down gracefully...');
   await prisma.$disconnect();
-  server.close(() => process.exit(0));
-};
+  process.exit(0);
+});
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on('SIGTERM', async () => {
+  logger.info('Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
 
-start();
+startServer();
