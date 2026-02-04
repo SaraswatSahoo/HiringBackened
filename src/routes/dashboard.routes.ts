@@ -1,222 +1,140 @@
-import { Router, Request, Response, NextFunction } from "express";
-import { prisma } from "../config/prisma";
-import { authenticate, authorize } from "../middleware/auth";
+// src/routes/dashboard.routes.ts
+import { Router } from 'express';
+import { param, query } from 'express-validator';
+import * as dashboardController from '../controllers/dashboard.controller';
+import { authenticate, authorize } from '../middleware/auth';
+import { validateRequest } from '../middleware/validation';
 
 const router = Router();
 
+// All routes require authentication
 router.use(authenticate);
 
-// GET /api/dashboard/admin
+// Admin dashboard - Overview of all JDs
 router.get(
-  "/admin",
-  authorize("ADMIN"),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const [
-        totalJDs,
-        activeJDs,
-        totalCandidates,
-        stageDistribution,
-        recentActivity,
-        topColleges
-      ] = await Promise.all([
-        prisma.jobDescription.count(),
-        prisma.jobDescription.count({ where: { isActive: true } }),
-        prisma.candidate.count(),
-        prisma.candidate.groupBy({
-          by: ["stage"],
-          _count: true
-        }),
-        prisma.candidateHistory.findMany({
-          take: 10,
-          orderBy: { createdAt: "desc" },
-          include: {
-            candidate: {
-              select: {
-                id: true,
-                name: true,
-                jobDescription: {
-                  select: { id: true, title: true }
-                }
-              }
-            },
-            changedBy: {
-              select: { id: true, name: true }
-            }
-          }
-        }),
-        prisma.candidate.groupBy({
-          by: ["college"],
-          where: {
-            college: { not: null }
-          },
-          _count: true,
-          orderBy: { _count: { college: "desc" } },
-          take: 10
-        })
-      ]);
-
-      const selections = stageDistribution.find(
-        (s) => s.stage === "SELECTED"
-      )?._count || 0;
-      const joined = stageDistribution.find((s) => s.stage === "JOINED")?._count || 0;
-      const dropouts = stageDistribution.find((s) => s.stage === "DROPPED")?._count || 0;
-      const rejected = stageDistribution.find((s) => s.stage === "REJECTED")?._count || 0;
-
-      res.json({
-        overview: {
-          totalJDs,
-          activeJDs,
-          totalCandidates,
-          totalSelections: selections + joined,
-          totalDropouts: dropouts + rejected
-        },
-        stageDistribution,
-        recentActivity,
-        topColleges
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
+  '/admin',
+  authorize('ADMIN'),
+  dashboardController.getAdminDashboard
 );
 
-// GET /api/dashboard/jd/:jobDescriptionId
+// JD-specific dashboard - Complete overview
 router.get(
-  "/jd/:jobDescriptionId",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const jobDescriptionId = req.params.jobDescriptionId;
-
-      const [jd, candidates, stageStats, collegeStats] = await Promise.all([
-        prisma.jobDescription.findUnique({
-          where: { id: jobDescriptionId },
-          include: {
-            createdBy: {
-              select: { id: true, name: true }
-            }
-          }
-        }),
-        prisma.candidate.findMany({
-          where: { jobDescriptionId },
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            stage: true,
-            isEligible: true,
-            rating: true,
-            createdAt: true
-          }
-        }),
-        prisma.candidate.groupBy({
-          by: ["stage"],
-          where: { jobDescriptionId },
-          _count: true
-        }),
-        prisma.candidate.groupBy({
-          by: ["college"],
-          where: {
-            jobDescriptionId,
-            college: { not: null }
-          },
-          _count: true,
-          orderBy: { _count: { college: "desc" } }
-        })
-      ]);
-
-      if (!jd) {
-        return res.status(404).json({ error: "Job description not found" });
-      }
-
-      const eligible = candidates.filter((c) => c.isEligible).length;
-      const avgRating =
-        candidates.reduce((sum, c) => sum + (c.rating || 0), 0) /
-          candidates.filter((c) => c.rating).length || 0;
-
-      res.json({
-        jd,
-        summary: {
-          total: candidates.length,
-          eligible,
-          avgRating
-        },
-        stageStats,
-        collegeStats,
-        recentCandidates: candidates.slice(0, 10)
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
+  '/jd/:jdId',
+  [
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+  ],
+  validateRequest,
+  dashboardController.getJDDashboard
 );
 
-// GET /api/dashboard/user
+// Dashboard summary - Quick stats
 router.get(
-  "/",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const userId = req!.user!.id;
+  '/summary/:jdId',
+  [
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+  ],
+  validateRequest,
+  dashboardController.getDashboardSummary
+);
 
-      const [createdJDs, recentActions, upcomingInterviews] = await Promise.all([
-        prisma.jobDescription.findMany({
-          where: { createdById: userId },
-          include: {
-            _count: {
-              select: { candidates: true }
-            }
-          },
-          orderBy: { createdAt: "desc" },
-          take: 10
-        }),
-        prisma.candidateHistory.findMany({
-          where: { changedById: userId },
-          include: {
-            candidate: {
-              select: {
-                id: true,
-                name: true,
-                jobDescription: {
-                  select: { id: true, title: true }
-                }
-              }
-            }
-          },
-          orderBy: { createdAt: "desc" },
-          take: 10
-        }),
-        prisma.interview.findMany({
-          where: {
-            interviewerId: userId,
-            scheduledAt: { gte: new Date() },
-            status: "SCHEDULED"
-          },
-          include: {
-            candidate: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                jobDescription: {
-                  select: { id: true, title: true }
-                }
-              }
-            }
-          },
-          orderBy: { scheduledAt: "asc" },
-          take: 10
-        })
-      ]);
+// Stage-wise statistics
+router.get(
+  '/stages/:jdId',
+  [
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+  ],
+  validateRequest,
+  dashboardController.getStageWiseStats
+);
 
-      res.json({
-        createdJDs,
-        recentActions,
-        upcomingInterviews
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
+// College performance analytics
+router.get(
+  '/college-performance/:jdId',
+  [
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+  ],
+  validateRequest,
+  dashboardController.getCollegePerformance
+);
+
+// Top performing colleges
+router.get(
+  '/top-colleges/:jdId',
+  [
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 50 })
+      .withMessage('Limit must be between 1 and 50'),
+  ],
+  validateRequest,
+  dashboardController.getTopColleges
+);
+
+// CGPA distribution analysis
+router.get(
+  '/cgpa-distribution/:jdId',
+  [
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+  ],
+  validateRequest,
+  dashboardController.getCGPADistribution
+);
+
+// Degree distribution analysis
+router.get(
+  '/degree-distribution/:jdId',
+  [
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+  ],
+  validateRequest,
+  dashboardController.getDegreeDistribution
+);
+
+// Eligibility statistics
+router.get(
+  '/eligibility-stats/:jdId',
+  [
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+  ],
+  validateRequest,
+  dashboardController.getEligibilityStats
+);
+
+// Detailed analytics with date range
+router.get(
+  '/analytics/:jdId',
+  [
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+    query('startDate')
+      .optional()
+      .isISO8601()
+      .withMessage('Valid start date is required (ISO 8601 format)'),
+    query('endDate')
+      .optional()
+      .isISO8601()
+      .withMessage('Valid end date is required (ISO 8601 format)'),
+  ],
+  validateRequest,
+  dashboardController.getAnalytics
 );
 
 export default router;

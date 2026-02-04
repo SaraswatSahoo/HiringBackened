@@ -1,130 +1,66 @@
-import { Router, Request, Response, NextFunction } from "express";
-import { body, validationResult } from "express-validator";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import { prisma } from "../config/prisma";
-import { env } from "../config/env";
-import { authenticate } from "../middleware/auth";
-import { UserRole } from "@prisma/client";
+// src/routes/auth.routes.ts
+import { Router } from 'express';
+import { body } from 'express-validator';
+import * as authController from '../controllers/auth.controller';
+import { authenticate } from '../middleware/auth';
+import { validateRequest } from '../middleware/validation';
+import { strictLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 
-const JWT_SECRET: jwt.Secret = env.JWT_SECRET;
-const JWT_EXPIRES_IN: jwt.SignOptions["expiresIn"] = (env.JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"]) || "7d";
-
-const signToken = (userId: string, role: UserRole) =>
-  jwt.sign({ userId, role }, JWT_SECRET, {
-    expiresIn: JWT_EXPIRES_IN
-  });
-
-// POST /api/auth/register
 router.post(
-  "/register",
+  '/register',
+  strictLimiter,
   [
-    body("email").isEmail().normalizeEmail(),
-    body("password").isLength({ min: 6 }),
-    body("name").trim().notEmpty(),
-    body("role").isIn(["ADMIN", "HR", "RECRUITER"]).optional()
+    body('email').isEmail().normalizeEmail(),
+    body('password').isLength({ min: 8 }),
+    body('name').notEmpty().trim(),
+    body('role').optional().isIn(['ADMIN', 'HR', 'RECRUITER']),
   ],
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-      }
-
-      const { email, password, name, role, phone } = req.body;
-
-      const hashedPassword = await bcrypt.hash(password, 12);
-
-      const user = await prisma.user.create({
-        data: {
-          email,
-          password: hashedPassword,
-          name,
-          role: (role as UserRole) || "RECRUITER",
-          phone
-        },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          role: true,
-          createdAt: true
-        }
-      });
-
-      const token = signToken(user.id, user.role);
-
-      res.status(201).json({ user, token });
-    } catch (err) {
-      next(err);
-    }
-  }
+  validateRequest,
+  authController.register
 );
 
-// POST /api/auth/login
 router.post(
-  "/login",
-  [body("email").isEmail().normalizeEmail(), body("password").notEmpty()],
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-      }
-
-      const { email, password } = req.body;
-
-      const user = await prisma.user.findUnique({
-        where: { email }
-      });
-
-      if (!user || !user.isActive) {
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-
-      const isValid = await bcrypt.compare(password, user.password);
-      if (!isValid) {
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-
-      const token = signToken(user.id, user.role);
-
-      const { password: _pw, ...safeUser } = user;
-
-      res.json({ user: safeUser, token });
-    } catch (err) {
-      next(err);
-    }
-  }
+  '/login',
+  strictLimiter,
+  [
+    body('email').isEmail().normalizeEmail(),
+    body('password').notEmpty(),
+  ],
+  validateRequest,
+  authController.login
 );
 
-// GET /api/auth/me
-router.get(
-  "/me",
+router.post(
+  '/refresh-token',
+  [body('refreshToken').notEmpty()],
+  validateRequest,
+  authController.refreshToken
+);
+
+router.get('/profile', authenticate, authController.getProfile);
+
+router.put(
+  '/profile',
   authenticate,
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+  [
+    body('name').optional().notEmpty().trim(),
+    body('phone').optional().isMobilePhone('any'),
+  ],
+  validateRequest,
+  authController.updateProfile
+);
 
-      const user = await prisma.user.findUnique({
-        where: { id: req.user.id },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          role: true,
-          phone: true,
-          createdAt: true
-        }
-      });
-
-      res.json(user);
-    } catch (err) {
-      next(err);
-    }
-  }
+router.post(
+  '/change-password',
+  authenticate,
+  [
+    body('currentPassword').notEmpty(),
+    body('newPassword').isLength({ min: 8 }),
+  ],
+  validateRequest,
+  authController.changePassword
 );
 
 export default router;

@@ -1,4 +1,5 @@
-// schema.prisma
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,28 +9,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============ USER & AUTH ============
-model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  password      String
-  name          String
-  role          UserRole @default(RECRUITER)
-  isActive      Boolean  @default(true)
-  phone         String?
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  
-  // Relations
-  createdJDs    JobDescription[] @relation("CreatedBy")
-  candidateActions CandidateHistory[]
-  comments      Comment[]
-  interviews    Interview[]
-  
-  @@index([email])
-  @@map("users")
-}
+// ==================== USER MANAGEMENT ====================
 
 enum UserRole {
   ADMIN
@@ -37,265 +17,382 @@ enum UserRole {
   RECRUITER
 }
 
-// ============ JOB DESCRIPTIONS (JDs) ============
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password      String
+  name          String
+  role          UserRole @default(RECRUITER)
+  isActive      Boolean  @default(true)
+  phone         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  createdJDs    JobDescription[] @relation("CreatedBy")
+  feedbacks     Feedback[]
+  activities    ActivityLog[]
+  
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+// ==================== JOB DESCRIPTIONS ====================
+
+enum JDStatus {
+  ACTIVE
+  PAUSED
+  CLOSED
+  DRAFT
+}
+
 model JobDescription {
-  id                String   @id @default(cuid())
+  id                String       @id @default(uuid())
   title             String
-  description       String   @db.Text
-  department        String?
+  description       String       @db.Text
+  department        String
+  status            JDStatus     @default(ACTIVE)
   location          String?
-  employmentType    EmploymentType @default(FULL_TIME)
+  salaryMin         Decimal?     @db.Decimal(10, 2)
+  salaryMax         Decimal?     @db.Decimal(10, 2)
+  openings          Int          @default(1)
   
-  // Hiring Type
-  hiringType        HiringType @default(NORMAL)
-  
-  // For Normal Hiring
-  experienceMin     Int?
-  experienceMax     Int?
-  salary            String?
-  requiredSkills    String[] // Array of skills
-  
-  // For Bulk Hiring
-  targetColleges    String[] // Array of college names
-  eligibleDegrees   String[] // e.g., ["B.Tech", "MCA"]
-  eligibleYears     Int[]    // e.g., [2024, 2025]
-  
-  isActive          Boolean  @default(true)
-  openings          Int      @default(1)
+  // Eligibility criteria for bulk hiring
+  eligibleDegrees   String[]     // ["B.Tech", "MCA"]
+  eligibleYears     Int[]        // [2024, 2025, 2026]
+  minCGPA           Decimal?     @db.Decimal(3, 2)
   
   createdById       String
-  createdBy         User     @relation("CreatedBy", fields: [createdById], references: [id])
+  createdBy         User         @relation("CreatedBy", fields: [createdById], references: [id])
   
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
   
-  // Relations
   candidates        Candidate[]
-  templates         MessageTemplate[]
+  stages            Stage[]
+  communications    Communication[]
+  dashboard         Dashboard?
   
-  @@index([hiringType, isActive])
+  @@index([status])
   @@index([createdById])
   @@map("job_descriptions")
 }
 
-enum EmploymentType {
-  FULL_TIME
-  PART_TIME
-  CONTRACT
-  INTERNSHIP
-}
+// ==================== CANDIDATES ====================
 
-enum HiringType {
-  BULK      // For freshers/college hiring
-  NORMAL    // For experienced hiring
-}
-
-// ============ CANDIDATES ============
 model Candidate {
-  id                String   @id @default(cuid())
+  id                String          @id @default(uuid())
   
-  // Basic Info
+  // Basic Information
   name              String
   email             String
   phone             String
+  alternatePhone    String?
   
-  // For Bulk Hiring
-  college           String?
-  degree            String?
-  yearOfPassing     Int?
+  // College/Fresher Information
+  college           String
+  degree            String
+  branch            String?
+  passOutYear       Int
+  cgpa              Decimal?        @db.Decimal(3, 2)
   
-  // For Normal Hiring
-  experienceYears   Float?
-  currentCompany    String?
-  previousCompany   String?
-  skills            String[] // Array of skills
-  location          String?
-  resumeUrl         String?
+  // Resume (Google Drive Link)
+  resumeLink        String?
   
-  // Status & Tracking
-  stage             CandidateStage @default(APPLIED)
-  isEligible        Boolean  @default(true)
-  rating            Float?   // 1-5 rating
+  // System fields
+  isEligible        Boolean         @default(false)
+  currentStageId    String?
+  currentStage      Stage?          @relation("CurrentStage", fields: [currentStageId], references: [id])
   
-  // Link to JD
-  jobDescriptionId  String
-  jobDescription    JobDescription @relation(fields: [jobDescriptionId], references: [id], onDelete: Cascade)
+  // JD Reference
+  jdId              String
+  jd                JobDescription  @relation(fields: [jdId], references: [id], onDelete: Cascade)
   
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  // Tags for filtering (college names, etc)
+  tags              String[]
   
-  // Relations
-  history           CandidateHistory[]
-  comments          Comment[]
-  interviews        Interview[]
-  communications    Communication[]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
   
-  @@unique([email, jobDescriptionId]) // One candidate per JD
-  @@index([jobDescriptionId, stage])
+  stageHistory      CandidateStage[]
+  feedbacks         Feedback[]
+  communications    CandidateComm[]
+  
+  @@unique([email, jdId])
+  @@index([jdId])
+  @@index([email])
   @@index([college])
-  @@index([yearOfPassing])
+  @@index([currentStageId])
+  @@index([isEligible])
+  @@index([passOutYear])
   @@map("candidates")
 }
 
-enum CandidateStage {
-  // Bulk Hiring Stages
+// ==================== STAGES & WORKFLOW ====================
+
+enum StageType {
   APPLIED
   SHORTLISTED
   INTERVIEWED
   SELECTED
   REJECTED
-  
-  // Normal Hiring Stages
-  HR_ROUND
-  TECHNICAL_ROUND
-  CLIENT_ROUND
-  OFFER
-  JOINED
-  DROPPED
 }
 
-// ============ CANDIDATE TRACKING ============
-model CandidateHistory {
-  id            String   @id @default(cuid())
+model Stage {
+  id              String        @id @default(uuid())
+  name            String
+  type            StageType
+  order           Int
+  description     String?
+  isActive        Boolean       @default(true)
   
-  candidateId   String
-  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jdId            String
+  jd              JobDescription @relation(fields: [jdId], references: [id], onDelete: Cascade)
   
-  fromStage     CandidateStage?
-  toStage       CandidateStage
-  notes         String?  @db.Text
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
   
-  changedById   String
-  changedBy     User     @relation(fields: [changedById], references: [id])
+  candidateStages CandidateStage[]
+  currentCandidates Candidate[] @relation("CurrentStage")
   
-  createdAt     DateTime @default(now())
+  @@unique([jdId, order])
+  @@index([jdId])
+  @@map("stages")
+}
+
+model CandidateStage {
+  id              String    @id @default(uuid())
+  
+  candidateId     String
+  candidate       Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  stageId         String
+  stage           Stage     @relation(fields: [stageId], references: [id])
+  
+  enteredAt       DateTime  @default(now())
+  exitedAt        DateTime?
+  
+  notes           String?   @db.Text
+  interviewDate   DateTime?
+  interviewMode   String?
+  interviewerName String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
   
   @@index([candidateId])
-  @@map("candidate_history")
+  @@index([stageId])
+  @@map("candidate_stages")
 }
 
-// ============ COMMENTS & FEEDBACK ============
-model Comment {
-  id            String   @id @default(cuid())
+// ==================== FEEDBACK & RATINGS ====================
+
+model Feedback {
+  id              String    @id @default(uuid())
   
-  candidateId   String
-  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  candidateId     String
+  candidate       Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   
-  content       String   @db.Text
+  givenById       String
+  givenBy         User      @relation(fields: [givenById], references: [id])
   
-  authorId      String
-  author        User     @relation(fields: [authorId], references: [id])
+  rating          Int       // 1-5 scale
+  comments        String    @db.Text
   
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  technicalSkills Int?      // 1-5
+  communication   Int?      // 1-5
+  cultureFit      Int?      // 1-5
+  problemSolving  Int?      // 1-5
+  
+  recommendation  String?   // "STRONG_YES", "YES", "MAYBE", "NO"
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
   
   @@index([candidateId])
-  @@map("comments")
+  @@index([givenById])
+  @@map("feedbacks")
 }
 
-// ============ INTERVIEWS ============
-model Interview {
-  id            String   @id @default(cuid())
-  
-  candidateId   String
-  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  
-  scheduledAt   DateTime
-  duration      Int      @default(60) // in minutes
-  interviewType String   // "HR", "Technical", "Client"
-  meetingLink   String?
-  
-  feedback      String?  @db.Text
-  rating        Float?   // 1-5
-  status        InterviewStatus @default(SCHEDULED)
-  
-  interviewerId String
-  interviewer   User     @relation(fields: [interviewerId], references: [id])
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  
-  @@index([candidateId])
-  @@index([scheduledAt])
-  @@map("interviews")
-}
+// ==================== COMMUNICATION ====================
 
-enum InterviewStatus {
-  SCHEDULED
-  COMPLETED
-  CANCELLED
-  NO_SHOW
-}
-
-// ============ BULK COMMUNICATION ============
-model Communication {
-  id            String   @id @default(cuid())
-  
-  candidateId   String
-  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  
-  channel       CommunicationChannel
-  subject       String?
-  message       String   @db.Text
-  status        CommunicationStatus @default(PENDING)
-  
-  sentAt        DateTime?
-  deliveredAt   DateTime?
-  errorMessage  String?
-  
-  createdAt     DateTime @default(now())
-  
-  @@index([candidateId])
-  @@index([status])
-  @@map("communications")
-}
-
-enum CommunicationChannel {
+enum CommChannel {
   EMAIL
-  SMS
   WHATSAPP
+  SMS
 }
 
-enum CommunicationStatus {
+enum CommStatus {
   PENDING
   SENT
   DELIVERED
   FAILED
 }
 
-// ============ MESSAGE TEMPLATES ============
-model MessageTemplate {
-  id                String   @id @default(cuid())
+model Communication {
+  id              String         @id @default(uuid())
   
-  name              String
-  channel           CommunicationChannel
-  subject           String?  // For emails
-  content           String   @db.Text
+  jdId            String
+  jd              JobDescription @relation(fields: [jdId], references: [id], onDelete: Cascade)
   
-  jobDescriptionId  String?
-  jobDescription    JobDescription? @relation(fields: [jobDescriptionId], references: [id], onDelete: Cascade)
+  channel         CommChannel
+  templateId      String?
+  template        Template?      @relation(fields: [templateId], references: [id])
   
-  isGlobal          Boolean  @default(false) // Available across all JDs
+  subject         String?
+  message         String         @db.Text
   
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  totalRecipients Int            @default(0)
+  sentCount       Int            @default(0)
+  failedCount     Int            @default(0)
   
-  @@index([jobDescriptionId])
-  @@map("message_templates")
+  scheduledAt     DateTime?
+  sentAt          DateTime?
+  
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  
+  recipients      CandidateComm[]
+  
+  @@index([jdId])
+  @@index([channel])
+  @@map("communications")
 }
 
-// ============ ANALYTICS & DASHBOARD ============
-model DashboardMetrics {
-  id            String   @id @default(cuid())
+model CandidateComm {
+  id                String         @id @default(uuid())
   
-  date          DateTime @unique @default(now())
+  communicationId   String
+  communication     Communication  @relation(fields: [communicationId], references: [id], onDelete: Cascade)
   
-  totalJDs      Int      @default(0)
-  activeJDs     Int      @default(0)
-  totalCandidates Int    @default(0)
-  totalSelections Int    @default(0)
-  totalDropouts   Int    @default(0)
+  candidateId       String
+  candidate         Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   
-  @@index([date])
-  @@map("dashboard_metrics")
+  status            CommStatus     @default(PENDING)
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  failureReason     String?
+  
+  @@index([communicationId])
+  @@index([candidateId])
+  @@index([status])
+  @@map("candidate_communications")
+}
+
+model Template {
+  id              String    @id @default(uuid())
+  name            String
+  channel         CommChannel
+  category        String    // "INTERVIEW_CALL", "TEST_LINK", "REJECTION", "OFFER"
+  subject         String?
+  body            String    @db.Text
+  variables       String[]  // ["candidate_name", "interview_date"]
+  
+  isActive        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  communications  Communication[]
+  
+  @@index([category])
+  @@index([channel])
+  @@map("templates")
+}
+
+// ==================== BULK UPLOAD ====================
+
+enum UploadStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+  PARTIAL
+}
+
+model BulkUpload {
+  id              String       @id @default(uuid())
+  jdId            String
+  fileName        String
+  fileUrl         String?
+  
+  totalRows       Int          @default(0)
+  successCount    Int          @default(0)
+  failureCount    Int          @default(0)
+  
+  status          UploadStatus @default(PROCESSING)
+  errorLog        Json?
+  
+  uploadedBy      String
+  
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  
+  @@index([jdId])
+  @@index([status])
+  @@map("bulk_uploads")
+}
+
+// ==================== ANALYTICS & LOGS ====================
+
+model ActivityLog {
+  id              String   @id @default(uuid())
+  
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  
+  action          String
+  entityType      String
+  entityId        String
+  
+  metadata        Json?
+  ipAddress       String?
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model Dashboard {
+  id              String   @id @default(uuid())
+  jdId            String   @unique
+
+  jd              JobDescription @relation(fields: [jdId], references: [id], onDelete: Cascade)
+  
+  totalCandidates Int      @default(0)
+  eligibleCount   Int      @default(0)
+  shortlistedCount Int     @default(0)
+  interviewedCount Int     @default(0)
+  selectedCount   Int      @default(0)
+  rejectedCount   Int      @default(0)
+  
+  avgTimeToHire   Int?     // in days
+  avgRating       Decimal? @db.Decimal(3, 2)
+  
+  lastUpdated     DateTime @default(now())
+  
+  @@index([jdId])
+  @@map("dashboards")
+}
+
+model CollegePerformance {
+  id              String   @id @default(uuid())
+  jdId            String
+  collegeName     String
+  
+  totalApplied    Int      @default(0)
+  totalEligible   Int      @default(0)
+  totalShortlisted Int     @default(0)
+  totalSelected   Int      @default(0)
+  
+  avgCGPA         Decimal? @db.Decimal(3, 2)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@unique([jdId, collegeName])
+  @@index([jdId])
+  @@map("college_performance")
 }

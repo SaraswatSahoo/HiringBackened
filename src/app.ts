@@ -1,70 +1,63 @@
-import express from "express";
-import cors from "cors";
-import helmet from "helmet";
-import compression from "compression";
-import morgan from "morgan";
-import rateLimit from "express-rate-limit";
-import { env } from "./config/env";
-import { errorHandler } from "./middleware/errorHandler";
+// src/app.ts
+import express, { Application } from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import compression from 'compression';
+import config from './config/env';
+import { limiter } from './middleware/rateLimiter';
+import { errorHandler } from './middleware/errorHandler';
 
-import authRoutes from "./routes/auth.routes";
-import userRoutes from "./routes/users.routes";
-import jdRoutes from "./routes/jds.routes";
-import candidateRoutes from "./routes/candidates.routes";
-import bulkRoutes from "./routes/bulk.routes";
-import communicationRoutes from "./routes/communications.routes";
-import templateRoutes from "./routes/templates.routes";
-import interviewRoutes from "./routes/interviews.routes";
-import commentRoutes from "./routes/comments.routes";
-import dashboardRoutes from "./routes/dashboard.routes";
+// Routes
+import authRoutes from './routes/auth.routes';
+import jdRoutes from './routes/jd.routes';
+import candidateRoutes from './routes/candidate.routes';
+import bulkRoutes from './routes/bulk.routes';
+import communicationRoutes from './routes/communication.routes';
+import feedbackRoutes from './routes/feedback.routes';
+import dashboardRoutes from './routes/dashboard.routes';
+import adminRoutes from './routes/admin.routes';
 
-const app = express();
+const app: Application = express();
 
+// Security middleware
 app.use(helmet());
-app.use(
-  cors({
-    origin:
-      env.NODE_ENV === "production"
-        ? env.FRONTEND_URL
-        : ["http://localhost:3000", "http://localhost:5173"],
-    credentials: true
-  })
-);
+app.use(cors({
+  origin: config.cors.origin.split(','),
+  credentials: true,
+}));
 
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
-});
-app.use("/api", apiLimiter);
+// Body parsing middleware
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Compression
 app.use(compression());
-app.use(
-  morgan(env.NODE_ENV === "development" ? "dev" : "combined")
-);
 
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+// Rate limiting
+app.use(limiter);
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+// Health check
+app.get('/health', (_req, res) => {  // FIX: Add underscore prefix
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// All API routes
-app.use("/api/auth", authRoutes);
-app.use("/api/users", userRoutes);
-app.use("/api/jds", jdRoutes);
-app.use("/api/candidates", candidateRoutes);
-app.use("/api/bulk", bulkRoutes);
-app.use("/api/communications", communicationRoutes);
-app.use("/api/templates", templateRoutes);
-app.use("/api/interviews", interviewRoutes);
-app.use("/api/comments", commentRoutes);
-app.use("/api/dashboard", dashboardRoutes);
+// API routes
+const apiPrefix = config.apiPrefix;
+app.use(`${apiPrefix}/auth`, authRoutes);
+app.use(`${apiPrefix}/jds`, jdRoutes);
+app.use(`${apiPrefix}/candidates`, candidateRoutes);
+app.use(`${apiPrefix}/bulk`, bulkRoutes);
+app.use(`${apiPrefix}/communications`, communicationRoutes);
+app.use(`${apiPrefix}/feedback`, feedbackRoutes);
+app.use(`${apiPrefix}/dashboard`, dashboardRoutes);
+app.use(`${apiPrefix}/admin`, adminRoutes);
 
+// 404 handler
+app.use((_req, res) => {  // FIX: Add underscore prefix
+  res.status(404).json({ error: 'Route not found' });
+});
+
+// Error handling middleware
 app.use(errorHandler);
-
-app.use((_req, res) => {
-  res.status(404).json({ error: "Route not found" });
-});
 
 export default app;

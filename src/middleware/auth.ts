@@ -1,57 +1,61 @@
-import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
-import { prisma } from "../config/prisma";
-import { env } from "../config/env";
-import { UserRole } from "@prisma/client";
-
-interface JwtPayload {
-  userId: string;
-  role: UserRole;
-  iat: number;
-  exp: number;
-}
+// src/middleware/auth.ts
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import config from '../config/env';
+import prisma from '../prisma/client';
+import logger from '../utils/logger';
+import { TokenPayload } from '../types/models';
+import { UserRole } from '@prisma/client';
 
 export const authenticate = async (
   req: Request,
   res: Response,
   next: NextFunction
-) => {
+): Promise<void> => {
   try {
-    const header = req.headers.authorization;
-    if (!header || !header.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Authentication required" });
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!token) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
     }
-
-    const token = header.split(" ")[1];
-    const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-
+    
+    const decoded = jwt.verify(token, config.jwt.secret) as TokenPayload;
+    
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        isActive: true
-      }
+      select: { 
+        id: true, 
+        email: true, 
+        name: true, 
+        role: true, 
+        isActive: true 
+      },
     });
-
+    
     if (!user || !user.isActive) {
-      return res.status(401).json({ error: "Invalid or inactive user" });
+      res.status(401).json({ error: 'Invalid or inactive user' });
+      return;
     }
-
+    
     req.user = user;
     next();
-  } catch {
-    return res.status(401).json({ error: "Invalid token" });
+  } catch (error) {
+    logger.error('Authentication error:', error);
+    res.status(401).json({ error: 'Invalid or expired token' });
   }
 };
 
-export const authorize =
-  (...roles: UserRole[]) =>
-  (req: Request, res: Response, next: NextFunction) => {
+export const authorize = (...roles: UserRole[]) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user || !roles.includes(req.user.role)) {
-      return res.status(403).json({ error: "Access denied" });
+      res.status(403).json({ 
+        error: 'Insufficient permissions',
+        required: roles,
+        current: req.user?.role 
+      });
+      return;
     }
     next();
   };
+};
