@@ -12,29 +12,18 @@ export interface AuthRequest extends Request {
   };
 }
 
+// src/types/api.ts
 export interface CSVRow {
-  [key: string]: string | number | undefined;
   name: string;
   email: string;
   phone: string;
-  // Bulk hiring fields
-  college?: string;
-  degree?: string;
+  alternatephone?: string;
+  college: string;
+  degree: string;
   branch?: string;
-  passOutYear?: string | number;
+  passoutyear: string | number;
   cgpa?: string | number;
-  alternatePhone?: string;
-  // Normal hiring fields
-  currentCompany?: string;
-  previousCompany?: string;
-  totalExperience?: string | number;
-  relevantExp?: string | number;
-  skills?: string;
-  currentLocation?: string;
-  preferredLocation?: string;
-  currentCTC?: string | number;
-  expectedCTC?: string | number;
-  noticePeriod?: string | number;
+  resumelink?: string;
 }
 
 export interface BulkUploadError {

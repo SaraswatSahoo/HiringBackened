@@ -3,12 +3,8 @@ import { Request, Response, NextFunction } from 'express';
 import prisma from '../prisma/client';
 import logger from '../utils/logger';
 import emailService from '../services/email.service';
-import whatsappService from '../services/whatsapp.service';
-import smsService from '../services/sms.service';
-import { CommChannel } from '@prisma/client';
-import { CommunicationFilters } from '../types/api';
 
-export const sendBulkCommunication = async (
+export const createCommunication = async (
   req: Request,
   res: Response,
   next: NextFunction
@@ -21,46 +17,38 @@ export const sendBulkCommunication = async (
       subject,
       message,
       candidateIds,
-      filters,
       scheduledAt,
     } = req.body;
     
-    let candidates;
-    
-    if (candidateIds && candidateIds.length > 0) {
-      candidates = await prisma.candidate.findMany({
-        where: {
-          id: { in: candidateIds },
-          jdId,
-        },
-        select: { id: true, name: true, email: true, phone: true },
-      });
-    } else if (filters) {
-      const where: any = { jdId };
-      if (filters.stageId) where.currentStageId = filters.stageId;
-      if (filters.isEligible !== undefined) where.isEligible = filters.isEligible;
-      if (filters.college) where.college = filters.college;
-      
-      candidates = await prisma.candidate.findMany({
-        where,
-        select: { id: true, name: true, email: true, phone: true },
-      });
-    } else {
+    // Validate channel - only EMAIL supported
+    if (channel !== 'EMAIL') {
       res.status(400).json({ 
-        error: 'Either candidateIds or filters must be provided' 
+        error: 'Only EMAIL channel is supported in this version' 
       });
       return;
     }
     
+    const candidates = await prisma.candidate.findMany({
+      where: {
+        id: { in: candidateIds },
+        jdId,
+      },
+      include: {
+        jd: {
+          select: { title: true },
+        },
+      },
+    });
+    
     if (candidates.length === 0) {
-      res.status(400).json({ error: 'No candidates found matching criteria' });
+      res.status(404).json({ error: 'No candidates found' });
       return;
     }
     
     const communication = await prisma.communication.create({
       data: {
         jdId,
-        channel: channel as CommChannel,
+        channel,
         templateId,
         subject,
         message,
@@ -69,90 +57,51 @@ export const sendBulkCommunication = async (
       },
     });
     
-    await prisma.candidateComm.createMany({
-      data: candidates.map(candidate => ({
-        communicationId: communication.id,
-        candidateId: candidate.id,
-        status: 'PENDING',
-      })),
-    });
-    
-    if (!scheduledAt) {
-      processCommunication(communication.id, channel as CommChannel, candidates, message, subject)
-        .catch(err => logger.error('Communication processing failed:', err));
-    }
-    
-    res.status(202).json({
-      message: 'Communication initiated successfully',
-      communicationId: communication.id,
-      totalRecipients: candidates.length,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-async function processCommunication(
-  commId: string, 
-  channel: CommChannel, 
-  candidates: any[], 
-  message: string, 
-  subject?: string
-): Promise<void> {
-  try {
-    const service = {
-      EMAIL: emailService,
-      WHATSAPP: whatsappService,
-      SMS: smsService,
-    }[channel];
-    
-    let sentCount = 0;
-    let failedCount = 0;
-    
-    const BATCH_SIZE = 10;
-    const BATCH_DELAY = 1000;
-    
-    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
-      const batch = candidates.slice(i, i + BATCH_SIZE);
-      
-      const results = await Promise.allSettled(
-        batch.map(async (candidate) => {
-          const personalizedMessage = message.replace(/\{name\}/g, candidate.name);
-          
-          if (channel === 'EMAIL' && subject) {
-            await service.send(candidate.email, subject, personalizedMessage);
-          } else {
-            await service.send(candidate.phone, personalizedMessage);
-          }
-          
-          await prisma.candidateComm.updateMany({
-            where: {
-              communicationId: commId,
-              candidateId: candidate.id,
-            },
-            data: {
-              status: 'SENT',
-              sentAt: new Date(),
-            },
-          });
-        })
-      );
-      
-      results.forEach(result => {
-        if (result.status === 'fulfilled') {
-          sentCount++;
-        } else {
-          failedCount++;
-        }
-      });
-      
-      if (i + BATCH_SIZE < candidates.length) {
-        await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+    // Send emails asynchronously
+    const sendPromises = candidates.map(async (candidate) => {
+      try {
+        const personalizedMessage = message
+          .replace(/\{name\}/g, candidate.name)
+          .replace(/\{email\}/g, candidate.email)
+          .replace(/\{jdTitle\}/g, candidate.jd.title);
+        
+        await emailService.send(
+          candidate.email,
+          subject || 'Update from HR Team',
+          personalizedMessage
+        );
+        
+        await prisma.candidateComm.create({
+          data: {
+            communicationId: communication.id,
+            candidateId: candidate.id,
+            status: 'SENT',
+            sentAt: new Date(),
+          },
+        });
+        
+        return { success: true, candidateId: candidate.id };
+      } catch (error) {
+        await prisma.candidateComm.create({
+          data: {
+            communicationId: communication.id,
+            candidateId: candidate.id,
+            status: 'FAILED',
+            failureReason: error instanceof Error ? error.message : 'Unknown error',
+          },
+        });
+        
+        return { success: false, candidateId: candidate.id };
       }
-    }
+    });
+    
+    const results = await Promise.allSettled(sendPromises);
+    
+    const sentCount = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+    const failedCount = results.length - sentCount;
     
     await prisma.communication.update({
-      where: { id: commId },
+      where: { id: communication.id },
       data: {
         sentCount,
         failedCount,
@@ -160,12 +109,19 @@ async function processCommunication(
       },
     });
     
-    logger.info(`Communication ${commId} completed: ${sentCount}/${candidates.length} sent`);
+    logger.info(`Communication sent: ${sentCount}/${candidates.length} successful`);
     
+    res.status(201).json({
+      message: 'Communication sent',
+      communicationId: communication.id,
+      sentCount,
+      failedCount,
+      totalRecipients: candidates.length,
+    });
   } catch (error) {
-    logger.error(`Communication ${commId} failed:`, error);
+    next(error);
   }
-}
+};
 
 export const getCommunicationsByJD = async (
   req: Request,
@@ -174,28 +130,23 @@ export const getCommunicationsByJD = async (
 ): Promise<void> => {
   try {
     const { jdId } = req.params;
-    const { page = '1', limit = '20', channel } = req.query;
+    const { page = '1', limit = '20' } = req.query;
     
     const pageNum = parseInt(page as string, 10);
     const limitNum = parseInt(limit as string, 10);
     const skip = (pageNum - 1) * limitNum;
-    const where: any = { jdId };
-    
-    if (channel) where.channel = channel;
     
     const [communications, total] = await Promise.all([
       prisma.communication.findMany({
-        where,
+        where: { jdId },
         skip,
         take: limitNum,
         orderBy: { createdAt: 'desc' },
         include: {
-          template: {
-            select: { name: true, category: true },
-          },
+          template: true,
         },
       }),
-      prisma.communication.count({ where }),
+      prisma.communication.count({ where: { jdId } }),
     ]);
     
     res.json({
@@ -212,7 +163,7 @@ export const getCommunicationsByJD = async (
   }
 };
 
-export const getCommunicationDetails = async (
+export const getCommunicationById = async (
   req: Request,
   res: Response,
   next: NextFunction
@@ -226,10 +177,11 @@ export const getCommunicationDetails = async (
         recipients: {
           include: {
             candidate: {
-              select: { id: true, name: true, email: true, phone: true },
+              select: { id: true, name: true, email: true },
             },
           },
         },
+        template: true,
       },
     });
     
@@ -239,103 +191,6 @@ export const getCommunicationDetails = async (
     }
     
     res.json({ communication });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Template Management
-export const createTemplate = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const { name, channel, category, subject, body, variables } = req.body;
-    
-    const template = await prisma.template.create({
-      data: {
-        name,
-        channel: channel as CommChannel,
-        category,
-        subject,
-        body,
-        variables: variables || [],
-      },
-    });
-    
-    res.status(201).json({
-      message: 'Template created successfully',
-      template,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getTemplates = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const { channel, category, isActive = 'true' } = req.query;
-    
-    const where: any = {};
-    if (channel) where.channel = channel;
-    if (category) where.category = category;
-    if (isActive !== undefined) where.isActive = isActive === 'true';
-    
-    const templates = await prisma.template.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-    });
-    
-    res.json({ templates });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateTemplate = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const updateData = { ...req.body };
-    
-    delete updateData.id;
-    delete updateData.createdAt;
-    
-    const template = await prisma.template.update({
-      where: { id },
-      data: updateData,
-    });
-    
-    res.json({
-      message: 'Template updated successfully',
-      template,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const deleteTemplate = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const { id } = req.params;
-    
-    await prisma.template.delete({
-      where: { id },
-    });
-    
-    res.json({ message: 'Template deleted successfully' });
   } catch (error) {
     next(error);
   }

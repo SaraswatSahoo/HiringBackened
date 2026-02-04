@@ -2,7 +2,7 @@
 import prisma from '../prisma/client';
 import logger from '../utils/logger';
 import csvParser from '../utils/csvParser';
-import { JobDescription } from '@prisma/client';
+import { JobDescription, Prisma } from '@prisma/client'; // Import Prisma
 import { CSVRow, BulkUploadError } from '../types/api';
 
 class BulkService {
@@ -57,7 +57,9 @@ class BulkService {
           successCount,
           failureCount,
           status: failureCount === 0 ? 'COMPLETED' : 'PARTIAL',
-          errorLog: errorLog.length > 0 ? errorLog : null,
+          errorLog: errorLog.length > 0 
+            ? (errorLog as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
         },
       });
       
@@ -72,7 +74,7 @@ class BulkService {
         where: { id: uploadId },
         data: {
           status: 'FAILED',
-          errorLog: [{ error: error.message }],
+          errorLog: [{ error: error.message }] as unknown as Prisma.InputJsonValue,
         },
       });
     }
@@ -82,10 +84,10 @@ class BulkService {
     row: CSVRow, 
     jd: JobDescription, 
     firstStage: any, 
-    rowIndex: number
+    _rowIndex: number
   ): Promise<any> {
-    if (!row.name || !row.email || !row.phone) {
-      throw new Error('Missing required fields: name, email, or phone');
+    if (!row.name || !row.email || !row.phone || !row.college || !row.degree) {
+      throw new Error('Missing required fields: name, email, phone, college, or degree');
     }
     
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -93,48 +95,35 @@ class BulkService {
       throw new Error('Invalid email format');
     }
     
+    const phoneStr = row.phone.toString().replace(/\D/g, '');
+    if (phoneStr.length < 10) {
+      throw new Error('Invalid phone number');
+    }
+    
+    const passOutYear = parseInt(row.passoutyear.toString(), 10);
+    const cgpa = row.cgpa ? parseFloat(row.cgpa.toString()) : null;
+    
     const candidateData: any = {
       name: row.name.trim(),
       email: row.email.toLowerCase().trim(),
-      phone: row.phone.toString().trim(),
-      alternatePhone: row.alternatePhone?.toString().trim(),
+      phone: phoneStr,
+      alternatePhone: row.alternatephone?.toString().replace(/\D/g, ''),
+      college: row.college.trim(),
+      degree: row.degree.trim(),
+      branch: row.branch?.trim(),
+      passOutYear,
+      cgpa,
+      resumeLink: row.resumelink?.trim(),
       jdId: jd.id,
-      source: 'BULK_UPLOAD',
       currentStageId: firstStage.id,
     };
     
-    if (jd.hiringType === 'BULK') {
-      candidateData.college = row.college?.toString().trim();
-      candidateData.degree = row.degree?.toString().trim();
-      candidateData.branch = row.branch?.toString().trim();
-      candidateData.passOutYear = row.passOutYear ? parseInt(row.passOutYear.toString(), 10) : null;
-      candidateData.cgpa = row.cgpa ? parseFloat(row.cgpa.toString()) : null;
-      
-      if (candidateData.college) {
-        candidateData.tags = [`college_${candidateData.college.toLowerCase().replace(/\s+/g, '_')}`];
-      }
-      
-      candidateData.isEligible = 
-        candidateData.degree && jd.eligibleDegrees.includes(candidateData.degree) &&
-        candidateData.passOutYear && jd.eligibleYears.includes(candidateData.passOutYear) &&
-        (!jd.minCGPA || (candidateData.cgpa && candidateData.cgpa >= parseFloat(jd.minCGPA.toString())));
-      
-    } else {
-      candidateData.currentCompany = row.currentCompany?.toString().trim();
-      candidateData.previousCompany = row.previousCompany?.toString().trim();
-      candidateData.totalExperience = row.totalExperience ? parseFloat(row.totalExperience.toString()) : null;
-      candidateData.relevantExp = row.relevantExp ? parseFloat(row.relevantExp.toString()) : null;
-      
-      if (row.skills) {
-        candidateData.skills = row.skills.toString().split(/[,|]/).map(s => s.trim()).filter(Boolean);
-      }
-      
-      candidateData.currentLocation = row.currentLocation?.toString().trim();
-      candidateData.preferredLocation = row.preferredLocation?.toString().trim();
-      candidateData.currentCTC = row.currentCTC ? parseFloat(row.currentCTC.toString()) : null;
-      candidateData.expectedCTC = row.expectedCTC ? parseFloat(row.expectedCTC.toString()) : null;
-      candidateData.noticePeriod = row.noticePeriod ? parseInt(row.noticePeriod.toString(), 10) : null;
-    }
+    candidateData.tags = [`college_${candidateData.college.toLowerCase().replace(/\s+/g, '_')}`];
+    
+    candidateData.isEligible = 
+      jd.eligibleDegrees.includes(candidateData.degree) &&
+      jd.eligibleYears.includes(candidateData.passOutYear) &&
+      (!jd.minCGPA || (candidateData.cgpa && candidateData.cgpa >= parseFloat(jd.minCGPA.toString())));
     
     return await prisma.$transaction(async (tx) => {
       const candidate = await tx.candidate.create({
@@ -153,25 +142,41 @@ class BulkService {
   }
   
   async updateDashboardStats(jdId: string): Promise<void> {
-    const stats = await prisma.candidate.groupBy({
-      by: ['currentStageId'],
-      where: { jdId },
-      _count: true,
-    });
+    const [total, eligible, shortlisted, interviewed, selected, rejected] = await Promise.all([
+      prisma.candidate.count({ where: { jdId } }),
+      prisma.candidate.count({ where: { jdId, isEligible: true } }),
+      prisma.candidate.count({
+        where: { jdId, currentStage: { type: 'SHORTLISTED' } },
+      }),
+      prisma.candidate.count({
+        where: { jdId, currentStage: { type: 'INTERVIEWED' } },
+      }),
+      prisma.candidate.count({
+        where: { jdId, currentStage: { type: 'SELECTED' } },
+      }),
+      prisma.candidate.count({
+        where: { jdId, currentStage: { type: 'REJECTED' } },
+      }),
+    ]);
     
-    const eligible = await prisma.candidate.count({
-      where: { jdId, isEligible: true },
-    });
-    
-    const total = await prisma.candidate.count({
+    await prisma.dashboard.upsert({
       where: { jdId },
-    });
-    
-    await prisma.dashboard.update({
-      where: { jdId },
-      data: {
+      create: {
+        jdId,
         totalCandidates: total,
         eligibleCount: eligible,
+        shortlistedCount: shortlisted,
+        interviewedCount: interviewed,
+        selectedCount: selected,
+        rejectedCount: rejected,
+      },
+      update: {
+        totalCandidates: total,
+        eligibleCount: eligible,
+        shortlistedCount: shortlisted,
+        interviewedCount: interviewed,
+        selectedCount: selected,
+        rejectedCount: rejected,
         lastUpdated: new Date(),
       },
     });

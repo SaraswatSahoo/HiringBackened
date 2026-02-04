@@ -16,26 +16,17 @@ interface Config {
   database: {
     url: string;
   };
-  aws: {
-    accessKeyId: string;
-    secretAccessKey: string;
-    region: string;
-    s3Bucket: string;
-  };
   email: {
     service: string;
-    sendgridApiKey: string;
+    smtp: {
+      host: string;
+      port: number;
+      secure: boolean;
+      user: string;
+      password: string;
+    };
     from: string;
-  };
-  whatsapp: {
-    accountSid: string;
-    authToken: string;
-    number: string;
-  };
-  sms: {
-    accountSid: string;
-    authToken: string;
-    number: string;
+    fromName: string;
   };
   rateLimit: {
     windowMs: number;
@@ -44,11 +35,15 @@ interface Config {
   cors: {
     origin: string;
   };
+  features: {
+    enableEmail: boolean;
+    enableBulkUpload: boolean;
+  };
 }
 
 const config: Config = {
   env: process.env.NODE_ENV || 'development',
-  port: parseInt(process.env.PORT || '5000', 10),
+  port: parseInt(process.env.PORT || '4000', 10),
   apiPrefix: process.env.API_PREFIX || '/api/v1',
   
   jwt: {
@@ -62,29 +57,17 @@ const config: Config = {
     url: process.env.DATABASE_URL || '',
   },
   
-  aws: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
-    region: process.env.AWS_REGION || 'ap-south-1',
-    s3Bucket: process.env.AWS_S3_BUCKET || '',
-  },
-  
   email: {
-    service: process.env.EMAIL_SERVICE || 'sendgrid',
-    sendgridApiKey: process.env.SENDGRID_API_KEY || '',
+    service: process.env.EMAIL_SERVICE || 'smtp',
+    smtp: {
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      secure: process.env.SMTP_SECURE === 'true',
+      user: process.env.SMTP_USER || '',
+      password: process.env.SMTP_PASSWORD || '',
+    },
     from: process.env.EMAIL_FROM || 'noreply@example.com',
-  },
-  
-  whatsapp: {
-    accountSid: process.env.TWILIO_ACCOUNT_SID || '',
-    authToken: process.env.TWILIO_AUTH_TOKEN || '',
-    number: process.env.TWILIO_WHATSAPP_NUMBER || '',
-  },
-  
-  sms: {
-    accountSid: process.env.TWILIO_ACCOUNT_SID || '',
-    authToken: process.env.TWILIO_AUTH_TOKEN || '',
-    number: process.env.TWILIO_SMS_NUMBER || '',
+    fromName: process.env.EMAIL_FROM_NAME || 'Hiring Platform',
   },
   
   rateLimit: {
@@ -94,6 +77,11 @@ const config: Config = {
   
   cors: {
     origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  },
+  
+  features: {
+    enableEmail: process.env.ENABLE_EMAIL_NOTIFICATIONS !== 'false',
+    enableBulkUpload: process.env.ENABLE_BULK_UPLOAD !== 'false',
   },
 };
 

@@ -3,7 +3,6 @@ import { Request, Response, NextFunction } from 'express';
 import prisma from '../prisma/client';
 import logger from '../utils/logger';
 import bulkService from '../services/bulk.service';
-import storageService from '../services/storage.service';
 
 export const bulkUploadCandidates = async (
   req: Request,
@@ -19,6 +18,20 @@ export const bulkUploadCandidates = async (
       return;
     }
     
+    // Validate file type
+    const allowedTypes = [
+      'text/csv',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    
+    if (!allowedTypes.includes(file.mimetype)) {
+      res.status(400).json({ 
+        error: 'Invalid file type. Only CSV and Excel files are allowed.' 
+      });
+      return;
+    }
+    
     const jd = await prisma.jobDescription.findUnique({
       where: { id: jdId },
     });
@@ -28,20 +41,10 @@ export const bulkUploadCandidates = async (
       return;
     }
     
-    if (jd.hiringType !== 'BULK') {
-      res.status(400).json({ 
-        error: 'Bulk upload is only available for bulk hiring JDs' 
-      });
-      return;
-    }
-    
-    const fileUrl = await storageService.uploadFile(file, 'bulk-uploads');
-    
     const bulkUpload = await prisma.bulkUpload.create({
       data: {
         jdId,
         fileName: file.originalname,
-        fileUrl,
         uploadedBy: req.user!.id,
         status: 'PROCESSING',
       },
@@ -69,16 +72,28 @@ export const getBulkUploadStatus = async (
   try {
     const { id } = req.params;
     
-    const upload = await prisma.bulkUpload.findUnique({
+    const bulkUpload = await prisma.bulkUpload.findUnique({
       where: { id },
     });
     
-    if (!upload) {
-      res.status(404).json({ error: 'Upload not found' });
+    if (!bulkUpload) {
+      res.status(404).json({ error: 'Bulk upload not found' });
       return;
     }
     
-    res.json({ upload });
+    res.json({
+      upload: {
+        id: bulkUpload.id,
+        fileName: bulkUpload.fileName,
+        status: bulkUpload.status,
+        totalRows: bulkUpload.totalRows,
+        successCount: bulkUpload.successCount,
+        failureCount: bulkUpload.failureCount,
+        errorLog: bulkUpload.errorLog,
+        createdAt: bulkUpload.createdAt,
+        updatedAt: bulkUpload.updatedAt,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -138,35 +153,56 @@ export const markEligibleCandidates = async (
       return;
     }
     
+    // Get all candidates for this JD
     const candidates = await prisma.candidate.findMany({
       where: { jdId },
-      select: { id: true, degree: true, passOutYear: true, cgpa: true },
     });
     
-    const eligibilityUpdates = candidates.map(candidate => {
-      const isEligible = 
-        candidate.degree && jd.eligibleDegrees.includes(candidate.degree) &&
-        candidate.passOutYear && jd.eligibleYears.includes(candidate.passOutYear) &&
-        (!jd.minCGPA || (candidate.cgpa && candidate.cgpa >= jd.minCGPA));
+    let updatedCount = 0;
+    let eligibleCount = 0;
+    let notEligibleCount = 0;
+    
+    // Update eligibility for each candidate
+    for (const candidate of candidates) {
+      // Calculate eligibility - this returns boolean (true or false), never null
+      const isEligible: boolean = 
+        jd.eligibleDegrees.includes(candidate.degree) &&
+        jd.eligibleYears.includes(candidate.passOutYear) &&
+        (!jd.minCGPA || (candidate.cgpa !== null && candidate.cgpa >= jd.minCGPA));
       
-      return prisma.candidate.update({
-        where: { id: candidate.id },
-        data: { isEligible: !!isEligible },
-      });
-    });
+      // Convert candidate.isEligible to boolean for comparison (null becomes false)
+      const currentEligibility = candidate.isEligible ?? false;
+      
+      // Only update if eligibility status changed
+      if (currentEligibility !== isEligible) {
+        await prisma.candidate.update({
+          where: { id: candidate.id },
+          data: { isEligible }, // Now guaranteed to be boolean
+        });
+        updatedCount++;
+      }
+      
+      // Count eligible vs not eligible
+      if (isEligible) {
+        eligibleCount++;
+      } else {
+        notEligibleCount++;
+      }
+    }
     
-    await prisma.$transaction(eligibilityUpdates);
-    
-    const eligibleCount = await prisma.candidate.count({
-      where: { jdId, isEligible: true },
-    });
-    
-    logger.info(`Eligibility marked for JD ${jdId}: ${eligibleCount} eligible`);
+    logger.info(`Marked eligibility for ${updatedCount} candidates in JD ${jdId}`);
     
     res.json({
-      message: 'Eligibility marked successfully',
+      message: 'Eligibility marking completed',
       totalCandidates: candidates.length,
+      updatedCount,
       eligibleCount,
+      notEligibleCount,
+      criteria: {
+        eligibleDegrees: jd.eligibleDegrees,
+        eligibleYears: jd.eligibleYears,
+        minCGPA: jd.minCGPA?.toString() || null,
+      },
     });
   } catch (error) {
     next(error);
@@ -174,23 +210,21 @@ export const markEligibleCandidates = async (
 };
 
 export const downloadSampleCSV = async (
-  req: Request,
+  _req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { hiringType } = req.query;
-    
-    const sampleData = hiringType === 'BULK'
-      ? 'Name,Email,Phone,College,Degree,Branch,Pass Out Year,CGPA\n' +
-        'John Doe,john@example.com,9876543210,ABC College,B.Tech,CSE,2024,8.5\n' +
-        'Jane Smith,jane@example.com,9876543211,XYZ College,B.Tech,ECE,2025,7.8'
-      : 'Name,Email,Phone,Current Company,Previous Company,Total Experience,Relevant Experience,Skills,Current Location,Expected CTC,Notice Period\n' +
-        'John Doe,john@example.com,9876543210,Google,Microsoft,5.5,4,JavaScript|React|Node.js,Bangalore,2500000,30\n' +
-        'Jane Smith,jane@example.com,9876543211,Amazon,TCS,3.2,3,Python|Django|AWS,Mumbai,1800000,45';
+    const sampleData = 
+      'Name,Email,Phone,Alternate Phone,College,Degree,Branch,Pass Out Year,CGPA,Resume Link\n' +
+      'John Doe,john.doe@example.com,9876543210,9876543211,IIT Delhi,B.Tech,Computer Science,2024,8.5,https://drive.google.com/file/d/xxxxx/view\n' +
+      'Jane Smith,jane.smith@example.com,9876543212,,NIT Trichy,B.Tech,Electronics,2024,7.8,https://drive.google.com/file/d/yyyyy/view\n' +
+      'Raj Kumar,raj.kumar@example.com,9876543213,9876543214,BITS Pilani,B.E,Mechanical,2025,8.2,https://drive.google.com/file/d/zzzzz/view\n' +
+      'Priya Singh,priya.singh@example.com,9876543215,,Anna University,B.Tech,Civil,2024,7.5,https://drive.google.com/file/d/aaaaa/view\n' +
+      'Amit Patel,amit.patel@example.com,9876543216,9876543217,VIT Vellore,B.Tech,Information Technology,2025,8.9,https://drive.google.com/file/d/bbbbb/view';
     
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=sample_${hiringType}.csv`);
+    res.setHeader('Content-Disposition', 'attachment; filename=sample_bulk_hiring.csv');
     res.send(sampleData);
   } catch (error) {
     next(error);

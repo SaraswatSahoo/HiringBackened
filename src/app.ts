@@ -22,7 +22,7 @@ const app: Application = express();
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: config.cors.origin,
+  origin: config.cors.origin.split(','),
   credentials: true,
 }));
 
@@ -37,7 +37,7 @@ app.use(compression());
 app.use(limiter);
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {  // FIX: Add underscore prefix
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
@@ -53,7 +53,7 @@ app.use(`${apiPrefix}/dashboard`, dashboardRoutes);
 app.use(`${apiPrefix}/admin`, adminRoutes);
 
 // 404 handler
-app.use((req, res) => {
+app.use((_req, res) => {  // FIX: Add underscore prefix
   res.status(404).json({ error: 'Route not found' });
 });
 

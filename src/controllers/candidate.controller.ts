@@ -2,9 +2,7 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../prisma/client';
 import logger from '../utils/logger';
-import storageService from '../services/storage.service';
-import { CandidateSource } from '@prisma/client';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@prisma/client';
 
 export const createCandidate = async (
   req: Request,
@@ -27,9 +25,19 @@ export const createCandidate = async (
     const candidate = await prisma.$transaction(async (tx) => {
       const newCandidate = await tx.candidate.create({
         data: {
-          ...candidateData,
+          name: candidateData.name,
+          email: candidateData.email,
+          phone: candidateData.phone,
+          alternatePhone: candidateData.alternatePhone,
+          college: candidateData.college,
+          degree: candidateData.degree,
+          branch: candidateData.branch,
+          passOutYear: candidateData.passOutYear,
+          cgpa: candidateData.cgpa,
+          resumeLink: candidateData.resumeLink,
+          tags: candidateData.tags || [],
+          jdId,
           currentStageId: firstStage.id,
-          source: (candidateData.source as CandidateSource) || 'MANUAL_UPLOAD',
         },
       });
       
@@ -50,7 +58,7 @@ export const createCandidate = async (
           const isEligible = 
             jd.eligibleDegrees.includes(candidateData.degree) &&
             jd.eligibleYears.includes(candidateData.passOutYear) &&
-            (!jd.minCGPA || (candidateData.cgpa && new Decimal(candidateData.cgpa).gte(jd.minCGPA)));
+            (!jd.minCGPA || (candidateData.cgpa && candidateData.cgpa >= parseFloat(jd.minCGPA.toString())));
           
           await tx.candidate.update({
             where: { id: newCandidate.id },
@@ -65,7 +73,7 @@ export const createCandidate = async (
           action: 'CANDIDATE_CREATED',
           entityType: 'CANDIDATE',
           entityId: newCandidate.id,
-          metadata: { jdId, name: newCandidate.name },
+          metadata: { jdId, name: newCandidate.name } as Prisma.InputJsonValue,
         },
       });
       
@@ -98,9 +106,6 @@ export const getCandidatesByJD = async (
       college,
       degree,
       passOutYear,
-      skills,
-      minExperience,
-      maxExperience,
       search,
     } = req.query;
     
@@ -115,18 +120,6 @@ export const getCandidatesByJD = async (
     if (college) where.college = { contains: college as string, mode: 'insensitive' };
     if (degree) where.degree = degree;
     if (passOutYear) where.passOutYear = parseInt(passOutYear as string, 10);
-    
-    if (skills) {
-      where.skills = {
-        hasSome: Array.isArray(skills) ? skills : [skills],
-      };
-    }
-    
-    if (minExperience || maxExperience) {
-      where.totalExperience = {};
-      if (minExperience) where.totalExperience.gte = parseFloat(minExperience as string);
-      if (maxExperience) where.totalExperience.lte = parseFloat(maxExperience as string);
-    }
     
     if (search) {
       where.OR = [
@@ -182,7 +175,7 @@ export const getCandidateById = async (
       where: { id },
       include: {
         jd: {
-          select: { id: true, title: true, hiringType: true },
+          select: { id: true, title: true, department: true, status: true },
         },
         currentStage: true,
         stageHistory: {
@@ -228,10 +221,12 @@ export const updateCandidate = async (
     const { id } = req.params;
     const updateData = { ...req.body };
     
+    // Remove fields that shouldn't be updated
     delete updateData.id;
     delete updateData.jdId;
     delete updateData.createdAt;
     delete updateData.currentStageId;
+    delete updateData.updatedAt;
     
     const candidate = await prisma.candidate.update({
       where: { id },
@@ -279,6 +274,7 @@ export const moveCandidateStage = async (
     const { stageId, notes, interviewDate, interviewMode, interviewerName } = req.body;
     
     await prisma.$transaction(async (tx) => {
+      // Exit current stage
       const currentStageHistory = await tx.candidateStage.findFirst({
         where: {
           candidateId: id,
@@ -293,6 +289,7 @@ export const moveCandidateStage = async (
         });
       }
       
+      // Enter new stage
       await tx.candidateStage.create({
         data: {
           candidateId: id,
@@ -304,18 +301,20 @@ export const moveCandidateStage = async (
         },
       });
       
+      // Update current stage
       await tx.candidate.update({
         where: { id },
         data: { currentStageId: stageId },
       });
       
+      // Log activity
       await tx.activityLog.create({
         data: {
           userId: req.user!.id,
           action: 'STAGE_CHANGED',
           entityType: 'CANDIDATE',
           entityId: id,
-          metadata: { stageId, notes },
+          metadata: { stageId, notes } as Prisma.InputJsonValue,
         },
       });
     });
@@ -323,39 +322,6 @@ export const moveCandidateStage = async (
     logger.info(`Candidate ${id} moved to stage ${stageId}`);
     
     res.json({ message: 'Candidate stage updated successfully' });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const uploadResume = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const file = req.file;
-    
-    if (!file) {
-      res.status(400).json({ error: 'No file uploaded' });
-      return;
-    }
-    
-    const fileUrl = await storageService.uploadFile(file, 'resumes');
-    
-    await prisma.candidate.update({
-      where: { id },
-      data: {
-        resumeUrl: fileUrl,
-        resumeFileName: file.originalname,
-      },
-    });
-    
-    res.json({
-      message: 'Resume uploaded successfully',
-      resumeUrl: fileUrl,
-    });
   } catch (error) {
     next(error);
   }
@@ -376,6 +342,7 @@ export const bulkMoveCandidates = async (
     
     await prisma.$transaction(async (tx) => {
       for (const candidateId of candidateIds) {
+        // Exit current stage
         const currentStageHistory = await tx.candidateStage.findFirst({
           where: {
             candidateId,
@@ -390,6 +357,7 @@ export const bulkMoveCandidates = async (
           });
         }
         
+        // Enter new stage
         await tx.candidateStage.create({
           data: {
             candidateId,
@@ -398,19 +366,25 @@ export const bulkMoveCandidates = async (
           },
         });
         
+        // Update current stage
         await tx.candidate.update({
           where: { id: candidateId },
           data: { currentStageId: stageId },
         });
       }
       
+      // Log bulk activity
       await tx.activityLog.create({
         data: {
           userId: req.user!.id,
           action: 'BULK_STAGE_CHANGE',
           entityType: 'CANDIDATE',
           entityId: 'multiple',
-          metadata: { candidateIds, stageId, count: candidateIds.length },
+          metadata: { 
+            candidateIds, 
+            stageId, 
+            count: candidateIds.length 
+          } as Prisma.InputJsonValue,
         },
       });
     });
@@ -419,6 +393,81 @@ export const bulkMoveCandidates = async (
     
     res.json({ 
       message: `${candidateIds.length} candidates moved successfully` 
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get candidates by college (for college performance analysis)
+export const getCandidatesByCollege = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { jdId, college } = req.params;
+    
+    const candidates = await prisma.candidate.findMany({
+      where: {
+        jdId,
+        college: { contains: college, mode: 'insensitive' },
+      },
+      include: {
+        currentStage: true,
+      },
+      orderBy: { cgpa: 'desc' },
+    });
+    
+    res.json({ candidates, count: candidates.length });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get eligible candidates
+export const getEligibleCandidates = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { jdId } = req.params;
+    const { page = '1', limit = '50' } = req.query;
+    
+    const pageNum = parseInt(page as string, 10);
+    const limitNum = parseInt(limit as string, 10);
+    const skip = (pageNum - 1) * limitNum;
+    
+    const [candidates, total] = await Promise.all([
+      prisma.candidate.findMany({
+        where: {
+          jdId,
+          isEligible: true,
+        },
+        skip,
+        take: limitNum,
+        include: {
+          currentStage: true,
+        },
+        orderBy: { cgpa: 'desc' },
+      }),
+      prisma.candidate.count({
+        where: {
+          jdId,
+          isEligible: true,
+        },
+      }),
+    ]);
+    
+    res.json({
+      candidates,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      },
     });
   } catch (error) {
     next(error);

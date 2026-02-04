@@ -2,7 +2,7 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../prisma/client';
 import logger from '../utils/logger';
-import { HiringType, JDStatus, StageType } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 export const createJD = async (
   req: Request,
@@ -14,7 +14,6 @@ export const createJD = async (
       title,
       description,
       department,
-      hiringType,
       location,
       salaryMin,
       salaryMax,
@@ -22,19 +21,15 @@ export const createJD = async (
       eligibleDegrees,
       eligibleYears,
       minCGPA,
-      experienceMin,
-      experienceMax,
-      requiredSkills,
-      preferredSkills,
     } = req.body;
     
     const jd = await prisma.$transaction(async (tx) => {
+      // Create JD
       const newJD = await tx.jobDescription.create({
         data: {
           title,
           description,
           department,
-          hiringType: hiringType as HiringType,
           location,
           salaryMin,
           salaryMax,
@@ -42,44 +37,47 @@ export const createJD = async (
           eligibleDegrees: eligibleDegrees || [],
           eligibleYears: eligibleYears || [],
           minCGPA,
-          experienceMin,
-          experienceMax,
-          requiredSkills: requiredSkills || [],
-          preferredSkills: preferredSkills || [],
           createdById: req.user!.id,
-          status: 'ACTIVE' as JDStatus,
+          status: 'DRAFT',
         },
       });
       
-      const stages = hiringType === 'BULK'
-        ? [
-            { name: 'Applied', type: 'APPLIED', order: 1 },
-            { name: 'Shortlisted', type: 'SHORTLISTED', order: 2 },
-            { name: 'Interviewed', type: 'INTERVIEWED', order: 3 },
-            { name: 'Selected', type: 'SELECTED', order: 4 },
-            { name: 'Rejected', type: 'REJECTED', order: 5 },
-          ]
-        : [
-            { name: 'Applied', type: 'APPLIED', order: 1 },
-            { name: 'HR Round', type: 'HR_ROUND', order: 2 },
-            { name: 'Technical Round', type: 'TECHNICAL_ROUND', order: 3 },
-            { name: 'Manager Round', type: 'MANAGER_ROUND', order: 4 },
-            { name: 'Offer Released', type: 'OFFER_RELEASED', order: 5 },
-            { name: 'Offer Accepted', type: 'OFFER_ACCEPTED', order: 6 },
-            { name: 'Joined', type: 'JOINED', order: 7 },
-            { name: 'Rejected', type: 'REJECTED', order: 8 },
-          ];
+      // Create default stages for bulk hiring
+      const defaultStages = [
+        { name: 'Applied', type: 'APPLIED' as const, order: 1 },
+        { name: 'Shortlisted', type: 'SHORTLISTED' as const, order: 2 },
+        { name: 'Interviewed', type: 'INTERVIEWED' as const, order: 3 },
+        { name: 'Selected', type: 'SELECTED' as const, order: 4 },
+        { name: 'Rejected', type: 'REJECTED' as const, order: 5 },
+      ];
       
-      await tx.stage.createMany({
-        data: stages.map(stage => ({
-          ...stage,
-          type: stage.type as StageType,
+      await Promise.all(
+        defaultStages.map(stage =>
+          tx.stage.create({
+            data: {
+              ...stage,
+              jdId: newJD.id,
+            },
+          })
+        )
+      );
+      
+      // Create dashboard entry
+      await tx.dashboard.create({
+        data: {
           jdId: newJD.id,
-        })),
+        },
       });
       
-      await tx.dashboard.create({
-        data: { jdId: newJD.id },
+      // Log activity
+      await tx.activityLog.create({
+        data: {
+          userId: req.user!.id,
+          action: 'JD_CREATED',
+          entityType: 'JD',
+          entityId: newJD.id,
+          metadata: { title, department } as Prisma.InputJsonValue,
+        },
       });
       
       return newJD;
@@ -102,13 +100,12 @@ export const getAllJDs = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { 
-      status, 
-      hiringType, 
-      department,
-      page = '1', 
+    const {
+      page = '1',
       limit = '20',
-      search 
+      status,
+      department,
+      search,
     } = req.query;
     
     const pageNum = parseInt(page as string, 10);
@@ -118,8 +115,8 @@ export const getAllJDs = async (
     const where: any = {};
     
     if (status) where.status = status;
-    if (hiringType) where.hiringType = hiringType;
-    if (department) where.department = department;
+    if (department) where.department = { contains: department as string, mode: 'insensitive' };
+    
     if (search) {
       where.OR = [
         { title: { contains: search as string, mode: 'insensitive' } },
@@ -138,7 +135,10 @@ export const getAllJDs = async (
             select: { id: true, name: true, email: true },
           },
           _count: {
-            select: { candidates: true },
+            select: {
+              candidates: true,
+              stages: true,
+            },
           },
         },
       }),
@@ -177,7 +177,9 @@ export const getJDById = async (
           orderBy: { order: 'asc' },
         },
         _count: {
-          select: { candidates: true },
+          select: {
+            candidates: true,
+          },
         },
       },
     });
@@ -187,7 +189,12 @@ export const getJDById = async (
       return;
     }
     
-    res.json({ jd });
+    // Get stats
+    const stats = await prisma.dashboard.findUnique({
+      where: { jdId: id },
+    });
+    
+    res.json({ jd, stats });
   } catch (error) {
     next(error);
   }
@@ -202,9 +209,11 @@ export const updateJD = async (
     const { id } = req.params;
     const updateData = { ...req.body };
     
+    // Remove fields that shouldn't be updated
     delete updateData.id;
     delete updateData.createdById;
     delete updateData.createdAt;
+    delete updateData.updatedAt;
     
     const jd = await prisma.jobDescription.update({
       where: { id },
@@ -253,13 +262,13 @@ export const updateJDStatus = async (
     
     const jd = await prisma.jobDescription.update({
       where: { id },
-      data: { status: status as JDStatus },
+      data: { status },
     });
     
-    logger.info(`JD status updated: ${id} to ${status}`);
+    logger.info(`JD status updated: ${id} to ${status} by user: ${req.user!.id}`);
     
     res.json({
-      message: 'Status updated successfully',
+      message: 'Job Description status updated successfully',
       jd,
     });
   } catch (error) {
@@ -267,6 +276,7 @@ export const updateJDStatus = async (
   }
 };
 
+// Get JD stages
 export const getJDStages = async (
   req: Request,
   res: Response,
@@ -286,6 +296,163 @@ export const getJDStages = async (
     });
     
     res.json({ stages });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Create custom stage
+export const createStage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { name, type, description, order } = req.body;
+    
+    const stage = await prisma.stage.create({
+      data: {
+        name,
+        type,
+        description,
+        order,
+        jdId: id,
+      },
+    });
+    
+    logger.info(`Stage created for JD ${id}: ${stage.id}`);
+    
+    res.status(201).json({
+      message: 'Stage created successfully',
+      stage,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update stage
+export const updateStage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { stageId } = req.params;
+    const updateData = { ...req.body };
+    
+    delete updateData.id;
+    delete updateData.jdId;
+    delete updateData.createdAt;
+    delete updateData.updatedAt;
+    
+    const stage = await prisma.stage.update({
+      where: { id: stageId },
+      data: updateData,
+    });
+    
+    res.json({
+      message: 'Stage updated successfully',
+      stage,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete stage
+export const deleteStage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { stageId } = req.params;
+    
+    await prisma.stage.delete({
+      where: { id: stageId },
+    });
+    
+    res.json({ message: 'Stage deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get eligibility criteria
+export const getEligibilityCriteria = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    
+    const jd = await prisma.jobDescription.findUnique({
+      where: { id },
+      select: {
+        eligibleDegrees: true,
+        eligibleYears: true,
+        minCGPA: true,
+      },
+    });
+    
+    if (!jd) {
+      res.status(404).json({ error: 'Job Description not found' });
+      return;
+    }
+    
+    res.json({ criteria: jd });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update eligibility criteria
+export const updateEligibilityCriteria = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { eligibleDegrees, eligibleYears, minCGPA } = req.body;
+    
+    const jd = await prisma.jobDescription.update({
+      where: { id },
+      data: {
+        eligibleDegrees,
+        eligibleYears,
+        minCGPA,
+      },
+    });
+    
+    // Re-check eligibility for all candidates
+    const candidates = await prisma.candidate.findMany({
+      where: { jdId: id },
+    });
+    
+    await Promise.all(
+      candidates.map(async (candidate) => {
+        const isEligible = 
+          eligibleDegrees.includes(candidate.degree) &&
+          eligibleYears.includes(candidate.passOutYear) &&
+          (!minCGPA || (candidate.cgpa && candidate.cgpa >= minCGPA));
+        
+        return prisma.candidate.update({
+          where: { id: candidate.id },
+          data: { isEligible },
+        });
+      })
+    );
+    
+    logger.info(`Eligibility criteria updated for JD ${id}`);
+    
+    res.json({
+      message: 'Eligibility criteria updated and candidates re-evaluated',
+      jd,
+    });
   } catch (error) {
     next(error);
   }
