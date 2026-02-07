@@ -10,19 +10,17 @@ router.use(authenticate);
 
 router.post(
   '/',
-  [
+  validateRequest([
     body('candidateId').isUUID(),
     body('rating').isInt({ min: 1, max: 5 }),
     body('comments').notEmpty(),
-  ],
-  validateRequest,
+  ]),
   feedbackController.createFeedback
 );
 
 router.get(
   '/candidate/:candidateId',
-  [param('candidateId').isUUID()],
-  validateRequest,
+  validateRequest([param('candidateId').isUUID()]),
   feedbackController.getFeedbacksByCandidate
 );
 

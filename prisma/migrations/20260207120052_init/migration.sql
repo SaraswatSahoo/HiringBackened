@@ -1,72 +1,20 @@
-/*
-  Warnings:
-
-  - You are about to drop the `Candidate` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Feedback` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Job` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Template` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `User` table. If the table is not empty, all the data it contains will be lost.
-
-*/
 -- CreateEnum
 CREATE TYPE "UserRole" AS ENUM ('ADMIN', 'HR', 'RECRUITER');
-
--- CreateEnum
-CREATE TYPE "HiringType" AS ENUM ('BULK', 'NORMAL');
 
 -- CreateEnum
 CREATE TYPE "JDStatus" AS ENUM ('ACTIVE', 'PAUSED', 'CLOSED', 'DRAFT');
 
 -- CreateEnum
-CREATE TYPE "CandidateSource" AS ENUM ('BULK_UPLOAD', 'MANUAL_UPLOAD', 'CAREER_PORTAL', 'REFERRAL', 'LINKEDIN', 'OTHER');
-
--- CreateEnum
-CREATE TYPE "StageType" AS ENUM ('APPLIED', 'SHORTLISTED', 'INTERVIEWED', 'SELECTED', 'REJECTED', 'HR_ROUND', 'TECHNICAL_ROUND', 'MANAGER_ROUND', 'CLIENT_ROUND', 'OFFER_RELEASED', 'OFFER_ACCEPTED', 'JOINED', 'DROPPED');
+CREATE TYPE "StageType" AS ENUM ('APPLIED', 'SHORTLISTED', 'INTERVIEWED', 'SELECTED', 'REJECTED');
 
 -- CreateEnum
 CREATE TYPE "CommChannel" AS ENUM ('EMAIL', 'WHATSAPP', 'SMS');
 
 -- CreateEnum
-CREATE TYPE "CommStatus" AS ENUM ('PENDING', 'SENT', 'DELIVERED', 'FAILED', 'READ');
+CREATE TYPE "CommStatus" AS ENUM ('PENDING', 'SENT', 'DELIVERED', 'FAILED');
 
 -- CreateEnum
 CREATE TYPE "UploadStatus" AS ENUM ('PROCESSING', 'COMPLETED', 'FAILED', 'PARTIAL');
-
--- DropForeignKey
-ALTER TABLE "Candidate" DROP CONSTRAINT "Candidate_jobId_fkey";
-
--- DropForeignKey
-ALTER TABLE "Feedback" DROP CONSTRAINT "Feedback_candidateId_fkey";
-
--- DropForeignKey
-ALTER TABLE "Job" DROP CONSTRAINT "Job_hrId_fkey";
-
--- DropForeignKey
-ALTER TABLE "Template" DROP CONSTRAINT "Template_jobId_fkey";
-
--- DropTable
-DROP TABLE "Candidate";
-
--- DropTable
-DROP TABLE "Feedback";
-
--- DropTable
-DROP TABLE "Job";
-
--- DropTable
-DROP TABLE "Template";
-
--- DropTable
-DROP TABLE "User";
-
--- DropEnum
-DROP TYPE "CandidateStatus";
-
--- DropEnum
-DROP TYPE "JobType";
-
--- DropEnum
-DROP TYPE "Role";
 
 -- CreateTable
 CREATE TABLE "users" (
@@ -89,7 +37,6 @@ CREATE TABLE "job_descriptions" (
     "title" TEXT NOT NULL,
     "description" TEXT NOT NULL,
     "department" TEXT NOT NULL,
-    "hiringType" "HiringType" NOT NULL,
     "status" "JDStatus" NOT NULL DEFAULT 'ACTIVE',
     "location" TEXT,
     "salaryMin" DECIMAL(10,2),
@@ -98,10 +45,6 @@ CREATE TABLE "job_descriptions" (
     "eligibleDegrees" TEXT[],
     "eligibleYears" INTEGER[],
     "minCGPA" DECIMAL(3,2),
-    "experienceMin" INTEGER,
-    "experienceMax" INTEGER,
-    "requiredSkills" TEXT[],
-    "preferredSkills" TEXT[],
     "createdById" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -116,27 +59,12 @@ CREATE TABLE "candidates" (
     "email" TEXT NOT NULL,
     "phone" TEXT NOT NULL,
     "alternatePhone" TEXT,
-    "college" TEXT,
-    "degree" TEXT,
+    "college" TEXT NOT NULL,
+    "degree" TEXT NOT NULL,
     "branch" TEXT,
-    "passOutYear" INTEGER,
+    "passOutYear" INTEGER NOT NULL,
     "cgpa" DECIMAL(3,2),
-    "currentCompany" TEXT,
-    "previousCompany" TEXT,
-    "totalExperience" DECIMAL(4,1),
-    "relevantExp" DECIMAL(4,1),
-    "skills" TEXT[],
-    "currentLocation" TEXT,
-    "preferredLocation" TEXT,
-    "currentCTC" DECIMAL(10,2),
-    "expectedCTC" DECIMAL(10,2),
-    "noticePeriod" INTEGER,
-    "resumeUrl" TEXT,
-    "resumeFileName" TEXT,
-    "portfolioUrl" TEXT,
-    "linkedinUrl" TEXT,
-    "githubUrl" TEXT,
-    "source" "CandidateSource" NOT NULL DEFAULT 'MANUAL_UPLOAD',
+    "resumeLink" TEXT,
     "isEligible" BOOLEAN NOT NULL DEFAULT false,
     "currentStageId" TEXT,
     "jdId" TEXT NOT NULL,
@@ -224,7 +152,6 @@ CREATE TABLE "candidate_communications" (
     "status" "CommStatus" NOT NULL DEFAULT 'PENDING',
     "sentAt" TIMESTAMP(3),
     "deliveredAt" TIMESTAMP(3),
-    "readAt" TIMESTAMP(3),
     "failureReason" TEXT,
 
     CONSTRAINT "candidate_communications_pkey" PRIMARY KEY ("id")
@@ -251,7 +178,7 @@ CREATE TABLE "bulk_uploads" (
     "id" TEXT NOT NULL,
     "jdId" TEXT NOT NULL,
     "fileName" TEXT NOT NULL,
-    "fileUrl" TEXT NOT NULL,
+    "fileUrl" TEXT,
     "totalRows" INTEGER NOT NULL DEFAULT 0,
     "successCount" INTEGER NOT NULL DEFAULT 0,
     "failureCount" INTEGER NOT NULL DEFAULT 0,
@@ -273,7 +200,6 @@ CREATE TABLE "activity_logs" (
     "entityId" TEXT NOT NULL,
     "metadata" JSONB,
     "ipAddress" TEXT,
-    "userAgent" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "activity_logs_pkey" PRIMARY KEY ("id")
@@ -289,7 +215,6 @@ CREATE TABLE "dashboards" (
     "interviewedCount" INTEGER NOT NULL DEFAULT 0,
     "selectedCount" INTEGER NOT NULL DEFAULT 0,
     "rejectedCount" INTEGER NOT NULL DEFAULT 0,
-    "droppedCount" INTEGER NOT NULL DEFAULT 0,
     "avgTimeToHire" INTEGER,
     "avgRating" DECIMAL(3,2),
     "lastUpdated" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -324,9 +249,6 @@ CREATE INDEX "users_role_idx" ON "users"("role");
 
 -- CreateIndex
 CREATE INDEX "job_descriptions_status_idx" ON "job_descriptions"("status");
-
--- CreateIndex
-CREATE INDEX "job_descriptions_hiringType_idx" ON "job_descriptions"("hiringType");
 
 -- CreateIndex
 CREATE INDEX "job_descriptions_createdById_idx" ON "job_descriptions"("createdById");
@@ -456,3 +378,6 @@ ALTER TABLE "candidate_communications" ADD CONSTRAINT "candidate_communications_
 
 -- AddForeignKey
 ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "dashboards" ADD CONSTRAINT "dashboards_jdId_fkey" FOREIGN KEY ("jdId") REFERENCES "job_descriptions"("id") ON DELETE CASCADE ON UPDATE CASCADE;

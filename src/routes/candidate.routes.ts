@@ -14,7 +14,7 @@ router.use(authenticate);
 router.post(
   '/',
   authorize('ADMIN', 'HR', 'RECRUITER'),
-  [
+  validateRequest([
     body('name')
       .notEmpty()
       .withMessage('Name is required')
@@ -61,15 +61,14 @@ router.post(
       .optional()
       .isArray()
       .withMessage('Tags must be an array'),
-  ],
-  validateRequest,
+  ]),
   candidateController.createCandidate
 );
 
 // Get all candidates for a specific JD with filters
 router.get(
   '/jd/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
@@ -102,15 +101,14 @@ router.get(
     query('search')
       .optional()
       .trim(),
-  ],
-  validateRequest,
+  ]),
   candidateController.getCandidatesByJD
 );
 
 // Get candidates by college
 router.get(
   '/jd/:jdId/college/:college',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
@@ -118,15 +116,14 @@ router.get(
       .notEmpty()
       .withMessage('College name is required')
       .trim(),
-  ],
-  validateRequest,
+  ]),
   candidateController.getCandidatesByCollege
 );
 
 // Get eligible candidates for a JD
 router.get(
   '/jd/:jdId/eligible',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
@@ -138,20 +135,18 @@ router.get(
       .optional()
       .isInt({ min: 1, max: 100 })
       .withMessage('Limit must be between 1 and 100'),
-  ],
-  validateRequest,
+  ]),
   candidateController.getEligibleCandidates
 );
 
 // Get candidate by ID
 router.get(
   '/:id',
-  [
+  validateRequest([
     param('id')
       .isUUID()
       .withMessage('Valid candidate ID is required'),
-  ],
-  validateRequest,
+  ]),
   candidateController.getCandidateById
 );
 
@@ -159,7 +154,7 @@ router.get(
 router.put(
   '/:id',
   authorize('ADMIN', 'HR', 'RECRUITER'),
-  [
+  validateRequest([
     param('id')
       .isUUID()
       .withMessage('Valid candidate ID is required'),
@@ -204,8 +199,7 @@ router.put(
       .optional()
       .isArray()
       .withMessage('Tags must be an array'),
-  ],
-  validateRequest,
+  ]),
   candidateController.updateCandidate
 );
 
@@ -213,12 +207,11 @@ router.put(
 router.delete(
   '/:id',
   authorize('ADMIN', 'HR'),
-  [
+  validateRequest([
     param('id')
       .isUUID()
       .withMessage('Valid candidate ID is required'),
-  ],
-  validateRequest,
+  ]),
   candidateController.deleteCandidate
 );
 
@@ -226,7 +219,7 @@ router.delete(
 router.post(
   '/:id/move-stage',
   authorize('ADMIN', 'HR', 'RECRUITER'),
-  [
+  validateRequest([
     param('id')
       .isUUID()
       .withMessage('Valid candidate ID is required'),
@@ -247,8 +240,7 @@ router.post(
     body('interviewerName')
       .optional()
       .trim(),
-  ],
-  validateRequest,
+  ]),
   candidateController.moveCandidateStage
 );
 
@@ -256,7 +248,7 @@ router.post(
 router.post(
   '/bulk/move-stage',
   authorize('ADMIN', 'HR'),
-  [
+  validateRequest([
     body('candidateIds')
       .isArray({ min: 1 })
       .withMessage('At least one candidate ID is required'),
@@ -269,8 +261,7 @@ router.post(
     body('notes')
       .optional()
       .trim(),
-  ],
-  validateRequest,
+  ]),
   candidateController.bulkMoveCandidates
 );
 

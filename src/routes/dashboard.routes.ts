@@ -20,55 +20,51 @@ router.get(
 // JD-specific dashboard - Complete overview
 router.get(
   '/jd/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
-  ],
-  validateRequest,
+  ]),
   dashboardController.getJDDashboard
 );
 
 // Dashboard summary - Quick stats
 router.get(
   '/summary/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
-  ],
-  validateRequest,
+  ]),
   dashboardController.getDashboardSummary
 );
 
 // Stage-wise statistics
 router.get(
   '/stages/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
-  ],
-  validateRequest,
+  ]),
   dashboardController.getStageWiseStats
 );
 
 // College performance analytics
 router.get(
   '/college-performance/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
-  ],
-  validateRequest,
+  ]),
   dashboardController.getCollegePerformance
 );
 
 // Top performing colleges
 router.get(
   '/top-colleges/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
@@ -76,51 +72,47 @@ router.get(
       .optional()
       .isInt({ min: 1, max: 50 })
       .withMessage('Limit must be between 1 and 50'),
-  ],
-  validateRequest,
+  ]),
   dashboardController.getTopColleges
 );
 
 // CGPA distribution analysis
 router.get(
   '/cgpa-distribution/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
-  ],
-  validateRequest,
+  ]),
   dashboardController.getCGPADistribution
 );
 
 // Degree distribution analysis
 router.get(
   '/degree-distribution/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
-  ],
-  validateRequest,
+  ]),
   dashboardController.getDegreeDistribution
 );
 
 // Eligibility statistics
 router.get(
   '/eligibility-stats/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
-  ],
-  validateRequest,
+  ]),
   dashboardController.getEligibilityStats
 );
 
 // Detailed analytics with date range
 router.get(
   '/analytics/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
@@ -132,8 +124,7 @@ router.get(
       .optional()
       .isISO8601()
       .withMessage('Valid end date is required (ISO 8601 format)'),
-  ],
-  validateRequest,
+  ]),
   dashboardController.getAnalytics
 );
 

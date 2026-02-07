@@ -11,28 +11,25 @@ router.use(authenticate);
 router.post(
   '/',
   authorize('ADMIN', 'HR'),
-  [
+  validateRequest([
     body('jdId').isUUID(),
     body('channel').isIn(['EMAIL']),
     body('subject').optional().trim(),
     body('message').notEmpty(),
     body('candidateIds').isArray({ min: 1 }),
-  ],
-  validateRequest,
+  ]),
   communicationController.createCommunication
 );
 
 router.get(
   '/jd/:jdId',
-  [param('jdId').isUUID()],
-  validateRequest,
+  validateRequest([param('jdId').isUUID()]),
   communicationController.getCommunicationsByJD
 );
 
 router.get(
   '/:id',
-  [param('id').isUUID()],
-  validateRequest,
+  validateRequest([param('id').isUUID()]),
   communicationController.getCommunicationById
 );
 

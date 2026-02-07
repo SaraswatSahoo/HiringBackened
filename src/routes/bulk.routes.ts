@@ -37,31 +37,29 @@ router.post(
   '/upload',
   authorize('ADMIN', 'HR'),
   upload.single('file'),
-  [
+  validateRequest([
     body('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
-  ],
-  validateRequest,
+  ]),
   bulkController.bulkUploadCandidates
 );
 
 // Get bulk upload status by upload ID
 router.get(
   '/status/:id',
-  [
+  validateRequest([
     param('id')
       .isUUID()
       .withMessage('Valid upload ID is required'),
-  ],
-  validateRequest,
+  ]),
   bulkController.getBulkUploadStatus
 );
 
 // Get all bulk uploads for a specific JD
 router.get(
   '/jd/:jdId',
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
@@ -73,8 +71,7 @@ router.get(
       .optional()
       .isInt({ min: 1, max: 100 })
       .withMessage('Limit must be between 1 and 100'),
-  ],
-  validateRequest,
+  ]),
   bulkController.getBulkUploadsByJD
 );
 
@@ -82,12 +79,11 @@ router.get(
 router.post(
   '/mark-eligible/:jdId',
   authorize('ADMIN', 'HR'),
-  [
+  validateRequest([
     param('jdId')
       .isUUID()
       .withMessage('Valid JD ID is required'),
-  ],
-  validateRequest,
+  ]),
   bulkController.markEligibleCandidates
 );
 

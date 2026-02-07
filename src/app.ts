@@ -1,4 +1,3 @@
-// src/app.ts
 import express, { Application } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -27,7 +26,7 @@ app.use(cors({
 }));
 
 // Body parsing middleware
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json());
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Compression
@@ -37,7 +36,7 @@ app.use(compression());
 app.use(limiter);
 
 // Health check
-app.get('/health', (_req, res) => {  // FIX: Add underscore prefix
+app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
@@ -53,7 +52,7 @@ app.use(`${apiPrefix}/dashboard`, dashboardRoutes);
 app.use(`${apiPrefix}/admin`, adminRoutes);
 
 // 404 handler
-app.use((_req, res) => {  // FIX: Add underscore prefix
+app.use((_req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 

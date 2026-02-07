@@ -13,44 +13,39 @@ router.get('/users', adminController.getAllUsers);
 
 router.get(
   '/users/:id',
-  [param('id').isUUID()],
-  validateRequest,
+  validateRequest([param('id').isUUID()]),
   adminController.getUserById
 );
 
 router.post(
   '/users',
-  [
+  validateRequest([
     body('email').isEmail().normalizeEmail(),
     body('password').isLength({ min: 8 }),
     body('name').notEmpty().trim(),
     body('role').isIn(['ADMIN', 'HR', 'RECRUITER']),
-  ],
-  validateRequest,
+  ]),
   adminController.createUser
 );
 
 router.put(
   '/users/:id',
-  [param('id').isUUID()],
-  validateRequest,
+  validateRequest([param('id').isUUID()]),
   adminController.updateUser
 );
 
 router.delete(
   '/users/:id',
-  [param('id').isUUID()],
-  validateRequest,
+  validateRequest([param('id').isUUID()]),
   adminController.deleteUser
 );
 
 router.post(
   '/users/:id/reset-password',
-  [
+  validateRequest([
     param('id').isUUID(),
     body('newPassword').isLength({ min: 8 }),
-  ],
-  validateRequest,
+  ]),
   adminController.resetUserPassword
 );
 
