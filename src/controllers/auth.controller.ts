@@ -62,15 +62,20 @@ export const register = async (
     
     logger.info(`User registered: ${email}`);
     
+    // FIXED: Return tokens in correct structure
     res.status(201).json({
       message: 'User registered successfully',
       user,
-      ...tokens,
+      tokens: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      }
     });
   } catch (error) {
     next(error);
   }
 };
+
 
 export const login = async (
   req: Request,
@@ -103,6 +108,7 @@ export const login = async (
     
     logger.info(`User logged in: ${email}`);
     
+    // FIXED: Return tokens in correct structure
     res.json({
       message: 'Login successful',
       user: {
@@ -111,12 +117,16 @@ export const login = async (
         name: user.name,
         role: user.role,
       },
-      ...tokens,
+      tokens: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      }
     });
   } catch (error) {
     next(error);
   }
 };
+
 
 export const refreshToken = async (
   req: Request,

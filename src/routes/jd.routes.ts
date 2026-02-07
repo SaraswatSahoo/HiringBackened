@@ -12,14 +12,13 @@ router.use(authenticate);
 router.post(
   '/',
   authorize('ADMIN', 'HR'),
-  [
+  validateRequest([
     body('title').notEmpty().trim(),
     body('description').notEmpty(),
     body('department').notEmpty().trim(),
     body('hiringType').isIn(['BULK', 'NORMAL']),
     body('openings').optional().isInt({ min: 1 }),
-  ],
-  validateRequest,
+  ]),
   jdController.createJD
 );
 
@@ -27,42 +26,37 @@ router.get('/', jdController.getAllJDs);
 
 router.get(
   '/:id',
-  [param('id').isUUID()],
-  validateRequest,
+  validateRequest([param('id').isUUID()]),
   jdController.getJDById
 );
 
 router.put(
   '/:id',
   authorize('ADMIN', 'HR'),
-  [param('id').isUUID()],
-  validateRequest,
+  validateRequest([param('id').isUUID()]),
   jdController.updateJD
 );
 
 router.delete(
   '/:id',
   authorize('ADMIN', 'HR'),
-  [param('id').isUUID()],
-  validateRequest,
+  validateRequest([param('id').isUUID()]),
   jdController.deleteJD
 );
 
 router.patch(
   '/:id/status',
   authorize('ADMIN', 'HR'),
-  [
+  validateRequest([
     param('id').isUUID(),
     body('status').isIn(['ACTIVE', 'PAUSED', 'CLOSED', 'DRAFT']),
-  ],
-  validateRequest,
+  ]),
   jdController.updateJDStatus
 );
 
 router.get(
   '/:id/stages',
-  [param('id').isUUID()],
-  validateRequest,
+  validateRequest([param('id').isUUID()]),
   jdController.getJDStages
 );
 
