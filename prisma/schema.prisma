@@ -51,23 +51,39 @@ model JobDescription {
   title             String
   description       String       @db.Text
   department        String
-  status            JDStatus     @default(ACTIVE)
   location          String?
+  
+  // Status
+  status            JDStatus     @default(DRAFT)
+  
+  // Compensation
   salaryMin         Decimal?     @db.Decimal(10, 2)
   salaryMax         Decimal?     @db.Decimal(10, 2)
   openings          Int          @default(1)
   
-  // Eligibility criteria for bulk hiring
-  eligibleDegrees   String[]     // ["B.Tech", "MCA"]
-  eligibleYears     Int[]        // [2024, 2025, 2026]
-  minCGPA           Decimal?     @db.Decimal(3, 2)
+  // Eligibility criteria (for bulk hiring)
+  eligibleDegrees   String[]     @default([])  // ["B.Tech", "B.E", "MCA", "M.Tech"]
+  eligibleStreams   String[]     @default([])  // ["Computer Science", "IT", "Electronics"]
+  eligibleYears     Int[]        @default([])  // [2024, 2025, 2026]
+  minCGPA           Decimal?     @db.Decimal(4, 2)
   
+  // Additional requirements
+  responsibilities  String?      @db.Text
+  skills            String[]     @default([])  // ["Java", "React", "SQL"]
+  
+  // Job details
+  employmentType    String?      // "Full-time", "Internship", "Contract"
+  experienceLevel   String?      // "Fresher", "0-2 years"
+  workMode          String?      // "Onsite", "Remote", "Hybrid"
+  
+  // Metadata
   createdById       String
   createdBy         User         @relation("CreatedBy", fields: [createdById], references: [id])
   
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
   
+  // Relations
   candidates        Candidate[]
   stages            Stage[]
   communications    Communication[]
@@ -94,10 +110,18 @@ model Candidate {
   degree            String
   branch            String?
   passOutYear       Int
-  cgpa              Decimal?        @db.Decimal(3, 2)
+  cgpa              Decimal?        @db.Decimal(4, 2)
+  backlogs          Int?             @default(0)
+  tenthPercentage   Decimal?         @db.Decimal(5, 2)
+  twelfthPercentage Decimal?         @db.Decimal(5, 2)
   
   // Resume (Google Drive Link)
   resumeLink        String?
+
+  address           String?         // Full address
+  city              String?         // City for location-based filtering
+  state             String?         // State
+  pincode           String?         // Pincode
   
   // System fields
   isEligible        Boolean         @default(false)
@@ -125,6 +149,11 @@ model Candidate {
   @@index([currentStageId])
   @@index([isEligible])
   @@index([passOutYear])
+  @@index([degree])           // ADD: For filtering by degree
+  @@index([branch])           // ADD: For filtering by branch
+  @@index([cgpa])             // ADD: For CGPA-based queries
+  @@index([createdAt])        // ADD: For sorting by application date
+  @@index([city])
   @@map("candidates")
 }
 
@@ -329,6 +358,8 @@ model BulkUpload {
   
   @@index([jdId])
   @@index([status])
+  @@index([uploadedBy])       // ADD: Track who uploaded
+  @@index([createdAt])        // ADD: Sort by upload date
   @@map("bulk_uploads")
 }
 
@@ -394,5 +425,7 @@ model CollegePerformance {
   
   @@unique([jdId, collegeName])
   @@index([jdId])
+  @@index([collegeName])      // ADD: Search by college
+  @@index([totalSelected])    // ADD: Sort by performance
   @@map("college_performance")
 }

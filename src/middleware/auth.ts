@@ -4,8 +4,13 @@ import jwt from 'jsonwebtoken';
 import config from '../config/env';
 import prisma from '../prisma/client';
 import logger from '../utils/logger';
-import { TokenPayload } from '../types/models';
 import { UserRole } from '@prisma/client';
+
+interface TokenPayload {
+  userId: string;
+  iat?: number;
+  exp?: number;
+}
 
 export const authenticate = async (
   req: Request,
