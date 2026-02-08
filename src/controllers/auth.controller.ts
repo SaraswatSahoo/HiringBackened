@@ -5,7 +5,17 @@ import jwt from 'jsonwebtoken';
 import prisma from '../prisma/client';
 import config from '../config/env';
 import logger from '../utils/logger';
-import { Tokens, TokenPayload } from '../types/models';
+
+interface TokenPayload {
+  userId: string;
+  iat?: number;
+  exp?: number;
+}
+
+interface Tokens {
+  accessToken: string;
+  refreshToken: string;
+}
 
 const JWT_SECRET: jwt.Secret = config.jwt.secret;
 const JWT_EXPIRE: jwt.SignOptions["expiresIn"] = config.jwt.expire as jwt.SignOptions["expiresIn"];
