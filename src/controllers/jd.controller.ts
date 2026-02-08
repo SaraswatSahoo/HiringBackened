@@ -48,13 +48,13 @@ export const createJD = async (
             department,
             location,
             status: status || 'DRAFT',
-            salaryMin: salaryMin ? parseFloat(salaryMin) : null,
-            salaryMax: salaryMax ? parseFloat(salaryMax) : null,
+            salaryMin: salaryMin ? new Prisma.Decimal(salaryMin) : null,
+            salaryMax: salaryMax ? new Prisma.Decimal(salaryMax) : null,
             openings: openings ? parseInt(openings, 10) : 1,
             eligibleDegrees: eligibleDegrees || [],
             eligibleStreams: eligibleStreams || [],
             eligibleYears: eligibleYears || [],
-            minCGPA: minCGPA ? parseFloat(minCGPA) : null,
+            minCGPA: minCGPA ? new Prisma.Decimal(minCGPA) : null,
             responsibilities,
             skills: skills || [],
             employmentType,
@@ -237,15 +237,15 @@ export const updateJD = async (
     delete updateData.stages;
     delete updateData.createdBy;
 
-    // Parse numeric fields if they exist
+    // Parse numeric fields if they exist - Use Prisma.Decimal for Decimal fields
     if (updateData.salaryMin !== undefined) {
-      updateData.salaryMin = updateData.salaryMin ? parseFloat(updateData.salaryMin) : null;
+      updateData.salaryMin = updateData.salaryMin ? new Prisma.Decimal(updateData.salaryMin) : null;
     }
     if (updateData.salaryMax !== undefined) {
-      updateData.salaryMax = updateData.salaryMax ? parseFloat(updateData.salaryMax) : null;
+      updateData.salaryMax = updateData.salaryMax ? new Prisma.Decimal(updateData.salaryMax) : null;
     }
     if (updateData.minCGPA !== undefined) {
-      updateData.minCGPA = updateData.minCGPA ? parseFloat(updateData.minCGPA) : null;
+      updateData.minCGPA = updateData.minCGPA ? new Prisma.Decimal(updateData.minCGPA) : null;
     }
     if (updateData.openings !== undefined) {
       updateData.openings = parseInt(updateData.openings, 10);
