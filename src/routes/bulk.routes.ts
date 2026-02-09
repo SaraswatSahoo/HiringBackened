@@ -16,10 +16,15 @@ const upload = multer({
     const allowedTypes = [
       'text/csv',
       'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/csv',
     ];
     
-    if (allowedTypes.includes(file.mimetype)) {
+    // Also check file extension
+    const allowedExtensions = ['.csv', '.xls', '.xlsx'];
+    const fileExt = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
+    
+    if (allowedTypes.includes(file.mimetype) || allowedExtensions.includes(fileExt)) {
       cb(null, true);
     } else {
       cb(new Error('Invalid file type. Only CSV and Excel files are allowed.'));
@@ -35,7 +40,7 @@ router.use(authenticate);
 // Upload bulk candidates CSV
 router.post(
   '/upload',
-  authorize('ADMIN', 'HR'),
+  authorize('ADMIN', 'HR', 'RECRUITER'),
   upload.single('file'),
   validateRequest([
     body('jdId')
@@ -71,8 +76,33 @@ router.get(
       .optional()
       .isInt({ min: 1, max: 100 })
       .withMessage('Limit must be between 1 and 100'),
+    query('status')
+      .optional()
+      .isIn(['PROCESSING', 'COMPLETED', 'FAILED', 'PARTIAL'])
+      .withMessage('Invalid status value'),
   ]),
   bulkController.getBulkUploadsByJD
+);
+
+// Get all bulk uploads (admin view)
+router.get(
+  '/all',
+  authorize('ADMIN', 'HR'),
+  validateRequest([
+    query('page')
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage('Page must be a positive integer'),
+    query('limit')
+      .optional()
+      .isInt({ min: 1, max: 100 })
+      .withMessage('Limit must be between 1 and 100'),
+    query('status')
+      .optional()
+      .isIn(['PROCESSING', 'COMPLETED', 'FAILED', 'PARTIAL'])
+      .withMessage('Invalid status value'),
+  ]),
+  bulkController.getAllBulkUploads
 );
 
 // Mark eligible candidates based on JD criteria
@@ -87,10 +117,64 @@ router.post(
   bulkController.markEligibleCandidates
 );
 
+// Re-process failed bulk upload
+router.post(
+  '/retry/:id',
+  authorize('ADMIN', 'HR'),
+  validateRequest([
+    param('id')
+      .isUUID()
+      .withMessage('Valid upload ID is required'),
+  ]),
+  bulkController.retryBulkUpload
+);
+
+// Delete bulk upload record
+router.delete(
+  '/:id',
+  authorize('ADMIN', 'HR'),
+  validateRequest([
+    param('id')
+      .isUUID()
+      .withMessage('Valid upload ID is required'),
+  ]),
+  bulkController.deleteBulkUpload
+);
+
+// Download error log for failed uploads
+router.get(
+  '/:id/error-log',
+  validateRequest([
+    param('id')
+      .isUUID()
+      .withMessage('Valid upload ID is required'),
+  ]),
+  bulkController.downloadErrorLog
+);
+
 // Download sample CSV template
 router.get(
   '/sample-csv',
   bulkController.downloadSampleCSV
+);
+
+// Download sample CSV with all optional fields
+router.get(
+  '/sample-csv-extended',
+  bulkController.downloadExtendedSampleCSV
+);
+
+// Validate CSV before upload (preview)
+router.post(
+  '/validate',
+  authorize('ADMIN', 'HR', 'RECRUITER'),
+  upload.single('file'),
+  validateRequest([
+    body('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+  ]),
+  bulkController.validateCSV
 );
 
 export default router;
