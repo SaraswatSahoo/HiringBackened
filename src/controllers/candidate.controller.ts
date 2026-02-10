@@ -284,7 +284,7 @@ export const getCandidatesByJD = async (
           _count: {
             select: {
               feedbacks: true,
-              communications: true,
+              emails: true,
             },
           },
         },
@@ -344,18 +344,20 @@ export const getCandidateById = async (
           },
           orderBy: { createdAt: 'desc' },
         },
-        communications: {
+        emails: {
           include: {
-            communication: {
+            email: {
               select: {
                 id: true,
-                channel: true,
                 subject: true,
+                type: true,
                 sentAt: true,
+                createdAt: true,
               },
             },
           },
           orderBy: { sentAt: 'desc' },
+          take: 10, // Limit to recent 10 emails
         },
       },
     });

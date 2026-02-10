@@ -1,349 +1,573 @@
 // src/services/email.service.ts
-import nodemailer from 'nodemailer';
-import config from '../config/env';
+import prisma from '../prisma/client';
+import { getDefaultTransporter, getSmtpDefaults } from '../config/smtp';
 import logger from '../utils/logger';
-
-interface Recipient {
-  email: string;
-  name: string;
-}
+import {
+  EmailStatus,
+  EmailType,
+  CreateEmailDto,
+  SendEmailResponse,
+  EmailWithRelations,
+  TemplateVariables,
+  EmailFilters,
+} from '../types/email';
+import { Candidate, Prisma } from '@prisma/client';
 
 class EmailService {
-  private transporter: nodemailer.Transporter;
+  /**
+   * Replace template variables with actual values
+   */
+  private replaceVariables(
+    template: string,
+    variables: TemplateVariables
+  ): string {
+    let result = template;
+    
+    Object.keys(variables).forEach((key) => {
+      const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
+      result = result.replace(regex, String(variables[key]));
+    });
+    
+    return result;
+  }
 
-  constructor() {
-    this.transporter = nodemailer.createTransport({
-      host: config.email.smtp.host,
-      port: config.email.smtp.port,
-      secure: config.email.smtp.secure,
-      auth: {
-        user: config.email.smtp.user,
-        pass: config.email.smtp.password,
+  /**
+   * Get candidates based on filters
+   */
+  private async getCandidatesByFilters(
+    jdId: string,
+    filters: EmailFilters
+  ): Promise<Candidate[]> {
+    const where: any = { jdId };
+
+    if (filters.isEligible !== undefined) {
+      where.isEligible = filters.isEligible;
+    }
+
+    if (filters.stageId) {
+      where.currentStageId = Array.isArray(filters.stageId)
+        ? { in: filters.stageId }
+        : filters.stageId;
+    }
+
+    if (filters.minCGPA) {
+      where.cgpa = { gte: filters.minCGPA };
+    }
+
+    if (filters.passOutYear) {
+      where.passOutYear = Array.isArray(filters.passOutYear)
+        ? { in: filters.passOutYear }
+        : filters.passOutYear;
+    }
+
+    if (filters.college) {
+      where.college = Array.isArray(filters.college)
+        ? { in: filters.college }
+        : filters.college;
+    }
+
+    if (filters.degree) {
+      where.degree = Array.isArray(filters.degree)
+        ? { in: filters.degree }
+        : filters.degree;
+    }
+
+    if (filters.applicationStatus) {
+      where.applicationStatus = Array.isArray(filters.applicationStatus)
+        ? { in: filters.applicationStatus }
+        : filters.applicationStatus;
+    }
+
+    return prisma.candidate.findMany({ where });
+  }
+
+  /**
+   * Send individual email to a candidate
+   */
+  async sendIndividualEmail(
+    candidateId: string,
+    jdId: string,
+    subject: string,
+    message: string,
+    htmlBody: string | null,
+    variables: TemplateVariables = {},
+    templateId?: string,
+    attachments: string[] = [],
+    sentBy: string = 'system'
+  ): Promise<SendEmailResponse> {
+    try {
+      // Get candidate details
+      const candidate = await prisma.candidate.findUnique({
+        where: { id: candidateId },
+      });
+
+      if (!candidate) {
+        throw new Error('Candidate not found');
+      }
+
+      // Create email record
+      const email = await prisma.email.create({
+        data: {
+          jdId,
+          type: EmailType.INDIVIDUAL,
+          templateId,
+          subject,
+          message,
+          htmlBody,
+          attachments,
+          variables: variables as Prisma.InputJsonValue,
+          totalRecipients: 1,
+          sentBy,
+        },
+      });
+
+      // Merge default variables with provided ones
+      const allVariables: TemplateVariables = {
+        candidate_name: candidate.name,
+        candidate_email: candidate.email,
+        ...variables,
+      };
+
+      // Personalize content
+      const personalizedSubject = this.replaceVariables(subject, allVariables);
+      const personalizedMessage = this.replaceVariables(message, allVariables);
+      const personalizedHtmlBody = htmlBody
+        ? this.replaceVariables(htmlBody, allVariables)
+        : null;
+
+      // Create candidate email record
+      const candidateEmail = await prisma.candidateEmail.create({
+        data: {
+          emailId: email.id,
+          candidateId: candidate.id,
+          recipientEmail: candidate.email,
+          recipientName: candidate.name,
+          personalizedSubject,
+          personalizedMessage,
+          personalizedHtmlBody,
+          status: EmailStatus.PENDING,
+        },
+      });
+
+      // Send email via SMTP
+      await this.sendViaSMTP(candidateEmail.id);
+
+      return {
+        emailId: email.id,
+        totalRecipients: 1,
+        status: 'sent',
+        message: 'Email sent successfully',
+      };
+    } catch (error: any) {
+      logger.error('Failed to send individual email:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send bulk emails to multiple candidates
+   */
+  async sendBulkEmail(data: CreateEmailDto): Promise<SendEmailResponse> {
+    try {
+      const {
+        jdId,
+        templateId,
+        subject,
+        message,
+        htmlBody,
+        variables = {},
+        filters = {},
+        candidateIds,
+        scheduledAt,
+        priority = 0,
+      } = data;
+
+      // Get candidates
+      let candidates: Candidate[];
+      if (candidateIds && candidateIds.length > 0) {
+        candidates = await prisma.candidate.findMany({
+          where: {
+            id: { in: candidateIds },
+            jdId,
+          },
+        });
+      } else {
+        candidates = await this.getCandidatesByFilters(jdId, filters);
+      }
+
+      if (candidates.length === 0) {
+        throw new Error('No candidates found matching the criteria');
+      }
+
+      // Create email record
+      const email = await prisma.email.create({
+        data: {
+          jdId,
+          type: EmailType.BULK,
+          templateId,
+          subject,
+          message,
+          htmlBody: htmlBody || null,
+          attachments: data.attachments || [],
+          variables: variables as Prisma.InputJsonValue,
+          filters: filters as Prisma.InputJsonValue,
+          totalRecipients: candidates.length,
+          scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+          priority,
+          sentBy: data.sentBy || 'system',
+        },
+      });
+
+      // Create candidate email records
+      const candidateEmailsData = candidates.map((candidate) => {
+        const allVariables: TemplateVariables = {
+          candidate_name: candidate.name,
+          candidate_email: candidate.email,
+          candidate_phone: candidate.phone,
+          ...variables,
+        };
+
+        const personalizedSubject = this.replaceVariables(subject, allVariables);
+        const personalizedMessage = this.replaceVariables(message, allVariables);
+        const personalizedHtmlBody = htmlBody
+          ? this.replaceVariables(htmlBody, allVariables)
+          : null;
+
+        return {
+          emailId: email.id,
+          candidateId: candidate.id,
+          recipientEmail: candidate.email,
+          recipientName: candidate.name,
+          personalizedSubject,
+          personalizedMessage,
+          personalizedHtmlBody,
+          status: EmailStatus.PENDING,
+        };
+      });
+
+      await prisma.candidateEmail.createMany({
+        data: candidateEmailsData,
+      });
+
+      // If not scheduled, send immediately
+      if (!scheduledAt) {
+        // Send emails in background (non-blocking)
+        this.processBulkEmail(email.id).catch((error) => {
+          logger.error(`Failed to process bulk email ${email.id}:`, error);
+        });
+
+        return {
+          emailId: email.id,
+          totalRecipients: candidates.length,
+          status: 'processing',
+          message: `Email is being sent to ${candidates.length} candidates`,
+        };
+      }
+
+      return {
+        emailId: email.id,
+        totalRecipients: candidates.length,
+        status: 'scheduled',
+        message: `Email scheduled for ${scheduledAt}`,
+        scheduledAt: new Date(scheduledAt),
+      };
+    } catch (error: any) {
+      logger.error('Failed to send bulk email:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Process bulk email sending
+   */
+  private async processBulkEmail(emailId: string): Promise<void> {
+    try {
+      // Update email status
+      await prisma.email.update({
+        where: { id: emailId },
+        data: { sentAt: new Date() },
+      });
+
+      // Get all pending candidate emails
+      const candidateEmails = await prisma.candidateEmail.findMany({
+        where: {
+          emailId,
+          status: EmailStatus.PENDING,
+        },
+      });
+
+      // Send emails sequentially to avoid rate limiting
+      for (const candidateEmail of candidateEmails) {
+        try {
+          await this.sendViaSMTP(candidateEmail.id);
+          await new Promise((resolve) => setTimeout(resolve, 100)); // 100ms delay
+        } catch (error) {
+          logger.error(
+            `Failed to send email to ${candidateEmail.recipientEmail}:`,
+            error
+          );
+        }
+      }
+
+      // Update email completion
+      const stats = await this.getEmailStats(emailId);
+      await prisma.email.update({
+        where: { id: emailId },
+        data: {
+          sentCount: stats.sentCount,
+          failedCount: stats.failedCount,
+          completedAt: new Date(),
+        },
+      });
+
+      logger.info(`Bulk email ${emailId} completed: ${stats.sentCount}/${stats.totalRecipients} sent`);
+    } catch (error: any) {
+      logger.error(`Failed to process bulk email ${emailId}:`, error);
+    }
+  }
+
+  /**
+   * Send email via SMTP
+   */
+  private async sendViaSMTP(candidateEmailId: string): Promise<void> {
+    const candidateEmail = await prisma.candidateEmail.findUnique({
+      where: { id: candidateEmailId },
+      include: {
+        email: true,
       },
     });
 
-    // Verify connection on initialization
-    this.verifyConnection();
-  }
-
-  private async verifyConnection(): Promise<void> {
-    try {
-      await this.transporter.verify();
-      logger.info('SMTP connection verified successfully');
-    } catch (error) {
-      logger.error('SMTP connection failed:', error);
+    if (!candidateEmail) {
+      throw new Error('Candidate email not found');
     }
-  }
 
-  async send(
-    to: string,
-    subject: string,
-    htmlContent: string,
-    textContent?: string
-  ): Promise<{ success: boolean }> {
     try {
-      const info = await this.transporter.sendMail({
-        from: `"${config.email.fromName}" <${config.email.from}>`,
-        to,
-        subject,
-        text: textContent || htmlContent.replace(/<[^>]*>/g, ''),
-        html: htmlContent,
+      const transporter = getDefaultTransporter();
+      const smtpDefaults = getSmtpDefaults();
+
+      const mailOptions = {
+        from: smtpDefaults.from,
+        replyTo: smtpDefaults.replyTo,
+        to: candidateEmail.recipientEmail,
+        subject: candidateEmail.personalizedSubject,
+        text: candidateEmail.personalizedMessage,
+        html: candidateEmail.personalizedHtmlBody || candidateEmail.personalizedMessage,
+        // attachments: candidateEmail.email.attachments.map(path => ({ path })),
+      };
+
+      const info = await transporter.sendMail(mailOptions);
+
+      // Update status to SENT
+      await prisma.candidateEmail.update({
+        where: { id: candidateEmailId },
+        data: {
+          status: EmailStatus.SENT,
+          sentAt: new Date(),
+          messageId: info.messageId,
+          smtpResponse: info.response,
+        },
       });
 
-      logger.info(`Email sent to ${to}: ${info.messageId}`);
+      // Update email stats
+      await this.updateEmailStats(candidateEmail.emailId);
 
-      return { success: true };
-    } catch (error) {
-      logger.error(`Email failed to ${to}:`, error);
+      logger.info(`Email sent to ${candidateEmail.recipientEmail}: ${info.messageId}`);
+    } catch (error: any) {
+      // Update status to FAILED
+      await prisma.candidateEmail.update({
+        where: { id: candidateEmailId },
+        data: {
+          status: EmailStatus.FAILED,
+          failedAt: new Date(),
+          failureReason: error.message,
+          retryCount: { increment: 1 },
+        },
+      });
+
+      // Update email stats
+      await this.updateEmailStats(candidateEmail.emailId);
+
+      logger.error(`Email failed to ${candidateEmail.recipientEmail}:`, error);
       throw error;
     }
   }
 
-  async sendBulk(
-    recipients: Recipient[],
-    subject: string,
-    htmlContent: string
-  ): Promise<{ success: boolean; count: number }> {
-    try {
-      const promises = recipients.map((recipient) => {
-        const personalizedHtml = htmlContent.replace(/\{name\}/g, recipient.name);
-        return this.send(recipient.email, subject, personalizedHtml);
-      });
+  /**
+   * Retry failed emails
+   */
+  async retryFailedEmail(candidateEmailId: string): Promise<void> {
+    const candidateEmail = await prisma.candidateEmail.findUnique({
+      where: { id: candidateEmailId },
+    });
 
-      await Promise.all(promises);
-      logger.info(`Bulk email sent to ${recipients.length} recipients`);
-
-      return { success: true, count: recipients.length };
-    } catch (error) {
-      logger.error('Bulk email failed:', error);
-      throw error;
+    if (!candidateEmail) {
+      throw new Error('Candidate email not found');
     }
+
+    if (candidateEmail.retryCount >= candidateEmail.maxRetries) {
+      throw new Error('Maximum retry attempts reached');
+    }
+
+    // Reset status to PENDING
+    await prisma.candidateEmail.update({
+      where: { id: candidateEmailId },
+      data: {
+        status: EmailStatus.PENDING,
+        failureReason: null,
+      },
+    });
+
+    // Retry sending
+    await this.sendViaSMTP(candidateEmailId);
   }
 
-  // Email templates for hiring platform
-  
-  async sendInterviewInvitation(
-    candidateEmail: string,
-    candidateName: string,
-    jdTitle: string,
-    interviewDate: Date,
-    interviewMode: string,
-    meetingLink?: string
-  ): Promise<{ success: boolean }> {
-    const subject = `Interview Invitation - ${jdTitle}`;
-    
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background-color: #4CAF50; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background-color: #f9f9f9; }
-          .details { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #4CAF50; }
-          .button { background-color: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; display: inline-block; margin: 20px 0; border-radius: 4px; }
-          .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Interview Invitation</h1>
-          </div>
-          <div class="content">
-            <p>Dear ${candidateName},</p>
-            <p>Congratulations! We are pleased to invite you for an interview for the position of <strong>${jdTitle}</strong>.</p>
-            
-            <div class="details">
-              <h3>Interview Details:</h3>
-              <p><strong>Date & Time:</strong> ${interviewDate.toLocaleString()}</p>
-              <p><strong>Mode:</strong> ${interviewMode}</p>
-              ${meetingLink ? `<p><strong>Meeting Link:</strong> <a href="${meetingLink}">${meetingLink}</a></p>` : ''}
-            </div>
-            
-            <p>Please confirm your availability at the earliest.</p>
-            
-            ${meetingLink ? `<a href="${meetingLink}" class="button">Join Interview</a>` : ''}
-            
-            <p>Best regards,<br>HR Team</p>
-          </div>
-          <div class="footer">
-            <p>This is an automated email. Please do not reply to this email.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-    
-    return this.send(candidateEmail, subject, html);
+  /**
+   * Update email statistics
+   */
+  private async updateEmailStats(emailId: string): Promise<void> {
+    const stats = await prisma.candidateEmail.groupBy({
+      by: ['status'],
+      where: { emailId },
+      _count: true,
+    });
+
+    const sentCount = stats.find((s) => s.status === EmailStatus.SENT)?._count || 0;
+    const failedCount = stats.find((s) => s.status === EmailStatus.FAILED)?._count || 0;
+    const bouncedCount = stats.find((s) => s.status === EmailStatus.BOUNCED)?._count || 0;
+
+    await prisma.email.update({
+      where: { id: emailId },
+      data: {
+        sentCount,
+        failedCount,
+        bouncedCount,
+      },
+    });
   }
 
-  async sendSelectionNotification(
-    candidateEmail: string,
-    candidateName: string,
-    jdTitle: string
-  ): Promise<{ success: boolean }> {
-    const subject = `Congratulations! You've been selected - ${jdTitle}`;
-    
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background-color: #4CAF50; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background-color: #f9f9f9; }
-          .celebration { text-align: center; font-size: 48px; margin: 20px 0; }
-          .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Selection Notification</h1>
-          </div>
-          <div class="content">
-            <div class="celebration">🎉</div>
-            <p>Dear ${candidateName},</p>
-            <p>We are delighted to inform you that you have been <strong>selected</strong> for the position of <strong>${jdTitle}</strong>!</p>
-            <p>Our HR team will contact you shortly with the next steps regarding the offer letter and joining formalities.</p>
-            <p>Once again, congratulations on your selection!</p>
-            <p>Best regards,<br>HR Team</p>
-          </div>
-          <div class="footer">
-            <p>This is an automated email. Please do not reply to this email.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-    
-    return this.send(candidateEmail, subject, html);
+  /**
+   * Get email statistics
+   */
+  private async getEmailStats(emailId: string) {
+    const email = await prisma.email.findUnique({
+      where: { id: emailId },
+      include: {
+        _count: {
+          select: {
+            recipients: true,
+          },
+        },
+      },
+    });
+
+    if (!email) {
+      throw new Error('Email not found');
+    }
+
+    return {
+      totalRecipients: email.totalRecipients,
+      sentCount: email.sentCount,
+      failedCount: email.failedCount,
+      bouncedCount: email.bouncedCount,
+      pendingCount: email.totalRecipients - email.sentCount - email.failedCount,
+      successRate:
+        email.totalRecipients > 0
+          ? Math.round((email.sentCount / email.totalRecipients) * 100)
+          : 0,
+    };
   }
 
-  async sendRejectionNotification(
-    candidateEmail: string,
-    candidateName: string,
-    jdTitle: string
-  ): Promise<{ success: boolean }> {
-    const subject = `Application Status Update - ${jdTitle}`;
-    
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background-color: #2196F3; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background-color: #f9f9f9; }
-          .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Application Status Update</h1>
-          </div>
-          <div class="content">
-            <p>Dear ${candidateName},</p>
-            <p>Thank you for your interest in the position of <strong>${jdTitle}</strong> and for taking the time to go through our selection process.</p>
-            <p>After careful consideration, we regret to inform you that we will not be moving forward with your application at this time.</p>
-            <p>We encourage you to apply for future opportunities that match your profile. We wish you all the best in your career endeavors.</p>
-            <p>Best regards,<br>HR Team</p>
-          </div>
-          <div class="footer">
-            <p>This is an automated email. Please do not reply to this email.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-    
-    return this.send(candidateEmail, subject, html);
+  /**
+   * Get email by ID with relations
+   */
+  async getEmailById(emailId: string): Promise<EmailWithRelations | null> {
+    const email = await prisma.email.findUnique({
+      where: { id: emailId },
+      include: {
+        jd: {
+          select: {
+            id: true,
+            title: true,
+            department: true,
+          },
+        },
+        template: true,
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        recipients: {
+          take: 10, // Limit recipients for performance
+        },
+      },
+    });
+
+    if (!email) return null;
+
+    const stats = await this.getEmailStats(emailId);
+
+    return {
+      ...email,
+      stats,
+    } as EmailWithRelations;
   }
 
-  async sendTestLink(
-    candidateEmail: string,
-    candidateName: string,
-    jdTitle: string,
-    testLink: string,
-    deadline: Date
-  ): Promise<{ success: boolean }> {
-    const subject = `Assessment Test Link - ${jdTitle}`;
-    
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background-color: #FF9800; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background-color: #f9f9f9; }
-          .details { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #FF9800; }
-          .button { background-color: #FF9800; color: white; padding: 12px 24px; text-decoration: none; display: inline-block; margin: 20px 0; border-radius: 4px; }
-          .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Assessment Test</h1>
-          </div>
-          <div class="content">
-            <p>Dear ${candidateName},</p>
-            <p>As part of the selection process for <strong>${jdTitle}</strong>, you are required to complete an online assessment.</p>
-            
-            <div class="details">
-              <h3>Test Details:</h3>
-              <p><strong>Deadline:</strong> ${deadline.toLocaleString()}</p>
-              <p><strong>Test Link:</strong> <a href="${testLink}">${testLink}</a></p>
-            </div>
-            
-            <p>Please complete the test before the deadline. Late submissions will not be considered.</p>
-            
-            <a href="${testLink}" class="button">Start Test</a>
-            
-            <p>Best regards,<br>HR Team</p>
-          </div>
-          <div class="footer">
-            <p>This is an automated email. Please do not reply to this email.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-    
-    return this.send(candidateEmail, subject, html);
-  }
+  /**
+   * Get all emails with pagination
+   */
+  async getAllEmails(params: {
+    jdId?: string;
+    type?: EmailType;
+    page?: number;
+    limit?: number;
+  }) {
+    const { jdId, type, page = 1, limit = 10 } = params;
 
-  async sendBulkUploadConfirmation(
-    hrEmail: string,
-    hrName: string,
-    jdTitle: string,
-    totalCandidates: number,
-    successCount: number,
-    failureCount: number
-  ): Promise<{ success: boolean }> {
-    const subject = `Bulk Upload Completed - ${jdTitle}`;
-    
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background-color: #2196F3; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background-color: #f9f9f9; }
-          .stats { background-color: white; padding: 15px; margin: 15px 0; }
-          .stat-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
-          .success { color: #4CAF50; font-weight: bold; }
-          .failure { color: #f44336; font-weight: bold; }
-          .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Bulk Upload Summary</h1>
-          </div>
-          <div class="content">
-            <p>Dear ${hrName},</p>
-            <p>Your bulk candidate upload for <strong>${jdTitle}</strong> has been completed.</p>
-            
-            <div class="stats">
-              <h3>Upload Statistics:</h3>
-              <div class="stat-item">
-                <span>Total Rows:</span>
-                <span>${totalCandidates}</span>
-              </div>
-              <div class="stat-item">
-                <span>Successfully Added:</span>
-                <span class="success">${successCount}</span>
-              </div>
-              <div class="stat-item">
-                <span>Failed:</span>
-                <span class="failure">${failureCount}</span>
-              </div>
-            </div>
-            
-            ${failureCount > 0 ? '<p>Please check the dashboard for detailed error logs.</p>' : '<p>All candidates were successfully added!</p>'}
-            
-            <p>Best regards,<br>System Notification</p>
-          </div>
-          <div class="footer">
-            <p>This is an automated email. Please do not reply to this email.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-    
-    return this.send(hrEmail, subject, html);
+    const where: any = {};
+    if (jdId) where.jdId = jdId;
+    if (type) where.type = type;
+
+    const [emails, total] = await Promise.all([
+      prisma.email.findMany({
+        where,
+        include: {
+          jd: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+          sender: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          _count: {
+            select: {
+              recipients: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.email.count({ where }),
+    ]);
+
+    return {
+      emails,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 }
 

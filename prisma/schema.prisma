@@ -32,6 +32,8 @@ model User {
   feedbacks   Feedback[]
   activities  ActivityLog[]
   bulkUploads BulkUpload[]
+  sentEmails       Email[]
+  createdTemplates EmailTemplate[]
 
   @@index([email])
   @@index([role])
@@ -87,7 +89,7 @@ model JobDescription {
   // Relations
   candidates     Candidate[]
   stages         Stage[]
-  communications Communication[]
+  emails         Email[]
   dashboard      Dashboard?
   bulkUploads    BulkUpload[]
 
@@ -178,7 +180,7 @@ model Candidate {
   // Relations
   stageHistory   CandidateStage[]
   feedbacks      Feedback[]
-  communications CandidateComm[]
+  emails         CandidateEmail[]
 
   @@unique([email, jdId])
   @@index([jdId])
@@ -289,90 +291,181 @@ model Feedback {
   @@map("feedbacks")
 }
 
-// ==================== COMMUNICATION ====================
+// ==================== COMMUNICATION (EMAIL ONLY) ====================
 
-enum CommChannel {
-  EMAIL
-  WHATSAPP
-  SMS
-}
-
-enum CommStatus {
+enum EmailStatus {
   PENDING
   SENT
   DELIVERED
   FAILED
+  BOUNCED
 }
 
-model Communication {
+enum EmailType {
+  BULK          // Sent to multiple candidates
+  INDIVIDUAL    // Sent to single candidate
+}
+
+enum TemplateCategory {
+  INTERVIEW_CALL
+  TEST_LINK
+  REJECTION
+  OFFER
+  SHORTLIST
+  REMINDER
+  FEEDBACK_REQUEST
+  ONBOARDING
+  GENERAL
+}
+
+model Email {
   id String @id @default(uuid())
 
+  // Relation
   jdId String
   jd   JobDescription @relation(fields: [jdId], references: [id], onDelete: Cascade)
 
-  channel    CommChannel
+  // Email details
+  type EmailType @default(BULK)
+  
   templateId String?
-  template   Template?   @relation(fields: [templateId], references: [id])
+  template   EmailTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
-  subject String?
-  message String  @db.Text
+  subject String
+  message String @db.Text
+  htmlBody String? @db.Text
+  
+  // Attachments (file paths or URLs)
+  attachments String[] @default([])
+  
+  // Personalization variables
+  variables Json? // { "interview_date": "2026-02-10", "time": "10:00 AM" }
 
+  // Recipient filters
+  filters Json? // { "stage": "SHORTLISTED", "eligible": true }
+
+  // Stats
   totalRecipients Int @default(0)
   sentCount       Int @default(0)
+  deliveredCount  Int @default(0)
   failedCount     Int @default(0)
+  bouncedCount    Int @default(0)
 
+  // Scheduling
   scheduledAt DateTime?
   sentAt      DateTime?
+  completedAt DateTime?
 
+  // Priority
+  priority Int @default(0)
+
+  // Sent by
+  sentBy String
+  sender User   @relation(fields: [sentBy], references: [id])
+
+  // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  recipients CandidateComm[]
+  recipients CandidateEmail[]
 
   @@index([jdId])
-  @@index([channel])
-  @@map("communications")
+  @@index([type])
+  @@index([sentBy])
+  @@index([scheduledAt])
+  @@index([createdAt])
+  @@map("emails")
 }
 
-model CandidateComm {
+model CandidateEmail {
   id String @id @default(uuid())
 
-  communicationId String
-  communication   Communication @relation(fields: [communicationId], references: [id], onDelete: Cascade)
+  emailId String
+  email   Email  @relation(fields: [emailId], references: [id], onDelete: Cascade)
 
   candidateId String
   candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
-  status        CommStatus @default(PENDING)
-  sentAt        DateTime?
-  deliveredAt   DateTime?
+  // Recipient details (snapshot at send time)
+  recipientEmail String
+  recipientName  String
+
+  // Personalized content (after variable replacement)
+  personalizedSubject String
+  personalizedMessage String @db.Text
+  personalizedHtmlBody String? @db.Text
+
+  // Status tracking
+  status    EmailStatus @default(PENDING)
+  sentAt    DateTime?
+  failedAt  DateTime?
+  
   failureReason String?
+  
+  // SMTP response
+  smtpResponse String? // SMTP server response
+  messageId    String? // Message-ID header
 
-  @@index([communicationId])
-  @@index([candidateId])
-  @@index([status])
-  @@map("candidate_communications")
-}
-
-model Template {
-  id        String      @id @default(uuid())
-  name      String
-  channel   CommChannel
-  category  String // "INTERVIEW_CALL", "TEST_LINK", "REJECTION", "OFFER"
-  subject   String?
-  body      String      @db.Text
-  variables String[] // ["candidate_name", "interview_date"]
-
-  isActive Boolean @default(true)
+  // Retry logic
+  retryCount Int @default(0)
+  maxRetries Int @default(3)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  communications Communication[]
+  @@index([emailId])
+  @@index([candidateId])
+  @@index([status])
+  @@index([sentAt])
+  @@index([recipientEmail])
+  @@map("candidate_emails")
+}
+
+model EmailTemplate {
+  id String @id @default(uuid())
+
+  name        String
+  description String? @db.Text
+  
+  category TemplateCategory
+  
+  subject  String
+  body     String @db.Text
+  htmlBody String? @db.Text
+  
+  // Variables that can be used in template
+  // e.g., {{candidate_name}}, {{interview_date}}, {{test_link}}
+  variables String[] @default([])
+  
+  // Default values for variables
+  defaultValues Json? // { "company_name": "Acme Corp", "hr_email": "hr@acme.com" }
+  
+  // Preview data for testing
+  previewData Json? // { "candidate_name": "John Doe", "interview_date": "2026-02-15" }
+
+  // Default attachments
+  attachments String[] @default([])
+
+  // Usage stats
+  usageCount Int @default(0)
+  lastUsedAt DateTime?
+  
+  isActive  Boolean @default(true)
+  isDefault Boolean @default(false)
+
+  // Access control
+  createdBy String
+  creator   User   @relation(fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  emails Email[]
 
   @@index([category])
-  @@index([channel])
-  @@map("templates")
+  @@index([isActive])
+  @@index([createdBy])
+  @@map("email_templates")
 }
 
 // ==================== BULK UPLOAD ====================

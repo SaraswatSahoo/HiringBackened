@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import prisma from '../prisma/client';
 import analyticsService from '../services/analytics.service';
 
+
 export const getAdminDashboard = async (
   _req: Request,
   res: Response,
@@ -76,6 +77,7 @@ export const getAdminDashboard = async (
   }
 };
 
+
 export const getJDDashboard = async (
   req: Request,
   res: Response,
@@ -125,10 +127,21 @@ export const getJDDashboard = async (
     const collegePerformance = await analyticsService.getCollegePerformance(jdId);
     const timeToHire = await analyticsService.getAverageTimeToHire(jdId);
     
-    const recentComms = await prisma.communication.findMany({
+    // ✅ FIXED: Changed from 'communication' to 'email'
+    const recentEmails = await prisma.email.findMany({
       where: { jdId },
       take: 5,
       orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        subject: true,
+        type: true,
+        totalRecipients: true,
+        sentCount: true,
+        failedCount: true,
+        sentAt: true,
+        createdAt: true,
+      },
     });
     
     res.json({
@@ -144,12 +157,13 @@ export const getJDDashboard = async (
       recentCandidates,
       collegePerformance,
       timeToHire,
-      recentComms,
+      recentEmails, // ✅ FIXED: Changed from 'recentComms' to 'recentEmails'
     });
   } catch (error) {
     next(error);
   }
 };
+
 
 export const getCollegePerformance = async (
   req: Request,
@@ -166,6 +180,7 @@ export const getCollegePerformance = async (
     next(error);
   }
 };
+
 
 export const getAnalytics = async (
   req: Request,
@@ -187,6 +202,7 @@ export const getAnalytics = async (
     next(error);
   }
 };
+
 
 export const getDashboardSummary = async (
   req: Request,
@@ -262,6 +278,7 @@ export const getDashboardSummary = async (
   }
 };
 
+
 export const getStageWiseStats = async (
   req: Request,
   res: Response,
@@ -300,6 +317,7 @@ export const getStageWiseStats = async (
     next(error);
   }
 };
+
 
 export const getTopColleges = async (
   req: Request,
@@ -366,6 +384,7 @@ export const getTopColleges = async (
   }
 };
 
+
 export const getCGPADistribution = async (
   req: Request,
   res: Response,
@@ -417,6 +436,7 @@ export const getCGPADistribution = async (
   }
 };
 
+
 export const getDegreeDistribution = async (
   req: Request,
   res: Response,
@@ -457,6 +477,7 @@ export const getDegreeDistribution = async (
     next(error);
   }
 };
+
 
 export const getEligibilityStats = async (
   req: Request,
