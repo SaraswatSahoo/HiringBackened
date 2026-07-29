@@ -14,11 +14,13 @@ export const getAdminDashboard = async (
       totalJDs,
       activeJDs,
       totalCandidates,
+      eligibleCandidates,
       totalSelections,
     ] = await Promise.all([
       prisma.jobDescription.count(),
       prisma.jobDescription.count({ where: { status: 'ACTIVE' } }),
       prisma.candidate.count(),
+      prisma.candidate.count({ where: { isEligible: true } }),
       prisma.candidate.count({
         where: {
           currentStage: {
@@ -38,35 +40,22 @@ export const getAdminDashboard = async (
       },
     });
     
-    // FIX: Get dashboards and JDs separately
-    const dashboards = await prisma.dashboard.findMany({
-      orderBy: { lastUpdated: 'desc' },
-    });
-    
-    const jdStatsWithDetails = await Promise.all(
-      dashboards.map(async (dashboard) => {
-        const jd = await prisma.jobDescription.findUnique({
-          where: { id: dashboard.jdId },
-          select: {
-            id: true,
-            title: true,
-            department: true,
-            status: true,
-          },
-        });
-        
-        return {
-          ...dashboard,
-          jd,
-        };
-      })
-    );
+    const jdStatsWithDetails = recentJDs.map((jd) => ({
+      id: jd.id,
+      jdId: jd.id,
+      title: jd.title,
+      department: jd.department,
+      status: jd.status,
+      candidateCount: jd._count?.candidates || 0,
+      openings: jd.openings || 1,
+    }));
     
     res.json({
       overview: {
         totalJDs,
         activeJDs,
         totalCandidates,
+        eligibleCandidates,
         totalSelections,
       },
       recentJDs,
@@ -339,7 +328,7 @@ export const getTopColleges = async (
         COUNT(*)::bigint as count,
         AVG(cgpa) as avgcgpa
       FROM candidates
-      WHERE "jdId" = ${jdId}::uuid
+      WHERE "jdId" = ${jdId}
       GROUP BY college
       ORDER BY count DESC
       LIMIT ${parseInt(limit as string, 10)}
@@ -454,7 +443,7 @@ export const getDegreeDistribution = async (
         degree,
         COUNT(*)::bigint as count
       FROM candidates
-      WHERE "jdId" = ${jdId}::uuid
+      WHERE "jdId" = ${jdId}
       GROUP BY degree
       ORDER BY count DESC
     `;

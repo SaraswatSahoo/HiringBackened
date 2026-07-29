@@ -261,7 +261,7 @@ class AnalyticsService {
         "passOutYear" as passoutyear,
         COUNT(*)::bigint as count
       FROM candidates
-      WHERE "jdId" = ${jdId}::uuid
+      WHERE "jdId" = ${jdId}
       GROUP BY "passOutYear"
       ORDER BY "passOutYear" ASC
     `;
@@ -285,7 +285,7 @@ class AnalyticsService {
         branch,
         COUNT(*)::bigint as count
       FROM candidates
-      WHERE "jdId" = ${jdId}::uuid
+      WHERE "jdId" = ${jdId}
         AND branch IS NOT NULL 
         AND branch != ''
       GROUP BY branch

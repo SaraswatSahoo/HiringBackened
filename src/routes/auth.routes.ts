@@ -58,4 +58,6 @@ router.post(
   authController.changePassword
 );
 
+router.post('/logout', authController.logout);
+
 export default router;

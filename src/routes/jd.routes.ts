@@ -66,7 +66,7 @@ router.get(
 router.put(
   '/:id',
   authorize('ADMIN', 'HR'),
-  [
+  validateRequest([
     param('id').isUUID().withMessage('Invalid JD ID'),
     body('title').optional().notEmpty().trim(),
     body('description').optional().notEmpty().trim(),
@@ -84,8 +84,7 @@ router.put(
     body('employmentType').optional().trim(),
     body('experienceLevel').optional().trim(),
     body('workMode').optional().isIn(['Onsite', 'Remote', 'Hybrid']),
-  ],
-  validateRequest,
+  ]),
   jdController.updateJD
 );
 
