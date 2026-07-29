@@ -262,3 +262,18 @@ export const changePassword = async (
     next(error);
   }
 };
+
+export const logout = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (req.user) {
+      logger.info(`User logged out: ${req.user.email}`);
+    }
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    next(error);
+  }
+};

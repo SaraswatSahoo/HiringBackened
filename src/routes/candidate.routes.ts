@@ -391,6 +391,17 @@ router.get(
   candidateController.getCandidatesBySkills
 );
 
+// Export candidates to CSV
+router.get(
+  '/jd/:jdId/export',
+  validateRequest([
+    param('jdId')
+      .isUUID()
+      .withMessage('Valid JD ID is required'),
+  ]),
+  candidateController.exportCandidatesCSV
+);
+
 // Get candidate by ID
 router.get(
   '/:id',

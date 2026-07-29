@@ -924,3 +924,148 @@ export const getCandidatesBySkills = async (
     next(error);
   }
 };
+
+export const exportCandidatesCSV = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { jdId } = req.params;
+    const {
+      stageId,
+      isEligible,
+      applicationStatus,
+      offerStatus,
+      college,
+      degree,
+      branch,
+      stream,
+      city,
+      state,
+      passOutYear,
+      minCGPA,
+      maxCGPA,
+      hasWorkExperience,
+      hasJoined,
+      gender,
+      skills,
+      search,
+    } = req.query;
+
+    const jd = await prisma.jobDescription.findUnique({
+      where: { id: jdId },
+      select: { title: true },
+    });
+
+    if (!jd) {
+      res.status(404).json({ error: 'Job Description not found' });
+      return;
+    }
+
+    const where: any = { jdId };
+
+    if (stageId) where.currentStageId = stageId;
+    if (isEligible !== undefined) where.isEligible = isEligible === 'true';
+    if (applicationStatus) where.applicationStatus = applicationStatus;
+    if (offerStatus) where.offerStatus = offerStatus;
+    if (college) where.college = { contains: college as string, mode: 'insensitive' };
+    if (degree) where.degree = { contains: degree as string, mode: 'insensitive' };
+    if (branch) where.branch = { contains: branch as string, mode: 'insensitive' };
+    if (stream) where.stream = { contains: stream as string, mode: 'insensitive' };
+    if (city) where.city = { contains: city as string, mode: 'insensitive' };
+    if (state) where.state = { contains: state as string, mode: 'insensitive' };
+    if (passOutYear) where.passOutYear = parseInt(passOutYear as string, 10);
+    if (gender) where.gender = gender;
+    if (hasWorkExperience !== undefined) where.hasWorkExperience = hasWorkExperience === 'true';
+    if (hasJoined !== undefined) where.hasJoined = hasJoined === 'true';
+
+    if (minCGPA || maxCGPA) {
+      where.cgpa = {};
+      if (minCGPA) where.cgpa.gte = parseFloat(minCGPA as string);
+      if (maxCGPA) where.cgpa.lte = parseFloat(maxCGPA as string);
+    }
+
+    if (skills) {
+      const skillsList = (skills as string).split(',').map((s) => s.trim());
+      where.skills = { hasSome: skillsList };
+    }
+
+    if (search) {
+      const searchStr = search as string;
+      where.OR = [
+        { name: { contains: searchStr, mode: 'insensitive' } },
+        { email: { contains: searchStr, mode: 'insensitive' } },
+        { phone: { contains: searchStr, mode: 'insensitive' } },
+        { college: { contains: searchStr, mode: 'insensitive' } },
+      ];
+    }
+
+    const candidates = await prisma.candidate.findMany({
+      where,
+      include: {
+        currentStage: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const headers = [
+      'Name',
+      'Email',
+      'Phone',
+      'College',
+      'Degree',
+      'Branch',
+      'Pass Out Year',
+      'CGPA',
+      'Eligible',
+      'Ineligibility Reason',
+      'Current Stage',
+      'Offer Status',
+      'Offered CTC',
+      'Technical Score',
+      'HR Score',
+      'Interview Score',
+      'Overall Rating',
+      'Applied At',
+    ];
+
+    const escapeCsv = (str: any) => {
+      if (str === null || str === undefined) return '""';
+      const val = String(str).replace(/"/g, '""');
+      return `"${val}"`;
+    };
+
+    const rows = candidates.map((c) => [
+      escapeCsv(c.name),
+      escapeCsv(c.email),
+      escapeCsv(c.phone),
+      escapeCsv(c.college),
+      escapeCsv(c.degree),
+      escapeCsv(c.branch || 'N/A'),
+      escapeCsv(c.passOutYear),
+      escapeCsv(c.cgpa ? c.cgpa.toString() : 'N/A'),
+      escapeCsv(c.isEligible ? 'Yes' : 'No'),
+      escapeCsv(c.ineligibilityReason || ''),
+      escapeCsv(c.currentStage?.name || 'N/A'),
+      escapeCsv(c.offerStatus || 'PENDING'),
+      escapeCsv(c.offeredCTC ? c.offeredCTC.toString() : 'N/A'),
+      escapeCsv(c.technicalScore ? c.technicalScore.toString() : 'N/A'),
+      escapeCsv(c.hrScore ? c.hrScore.toString() : 'N/A'),
+      escapeCsv(c.interviewScore ? c.interviewScore.toString() : 'N/A'),
+      escapeCsv(c.overallRating ? c.overallRating.toString() : 'N/A'),
+      escapeCsv(new Date(c.appliedAt).toISOString().split('T')[0]),
+    ]);
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+
+    const sanitizedTitle = jd.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const filename = `candidates_${sanitizedTitle}_${new Date().toISOString().split('T')[0]}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csvContent);
+  } catch (error) {
+    next(error);
+  }
+};
